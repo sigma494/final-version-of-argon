@@ -193,7 +193,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local Argon = {
     Name = "Argon",
-    Version = "2.0.0",
+    Version = "3.0.0",
     Build = "stable",
 
     -- runtime state
@@ -2511,7 +2511,7 @@ local function makeDraggable(frame, handle, options)
             and input.UserInputType ~= Enum.UserInputType.Touch then
             return
         end
-        if options.shouldDrag and not options.shouldDrag() then
+        if options.shouldDrag and not options.shouldDrag(input, handle) then
             return
         end
         dragging = true
@@ -3302,7 +3302,11 @@ function Page:Build(config)
 
     if self.Closable then
         self.CloseButton = self:MakeHeaderButton("×", "Close", function()
-            self.Window:SelectPage(self.Window.Pages[1])
+            if self.Window.AutoClosePage then
+                self.Window:ClosePage()
+            else
+                self.Window:SelectPage(self.Window.Pages[1])
+            end
         end)
     end
 
@@ -3471,6 +3475,46 @@ function Page:BuildSearch()
     return self.SearchFrame
 end
 
+function Page:AutoSection(name)
+    name = tostring(name or "Content")
+    self._autoSections = self._autoSections or {}
+    local existing = self._autoSections[name]
+    if existing and not existing.Destroyed then
+        return existing
+    end
+    local section = self:Section({ Name = name, Collapsible = false })
+    self._autoSections[name] = section
+    return section
+end
+
+-- Every page-level component factory forwards to the section the script names,
+-- or to an implicit one, so `Page:StatCard{...}` works without bookkeeping.
+local function pageForward(page, method, config)
+    config = config or {}
+    local section = page:AutoSection(config.Section)
+    return section[method](section, config)
+end
+
+function Page:Steps(config)
+    return pageForward(self, "Steps", config)
+end
+
+function Page:StatCard(config)
+    return pageForward(self, "StatCard", config)
+end
+
+function Page:FileRow(config)
+    return pageForward(self, "FileRow", config)
+end
+
+function Page:Callout(config)
+    return pageForward(self, "Callout", config)
+end
+
+function Page:CardList(config)
+    return pageForward(self, "CardList", config)
+end
+
 function Page:Section(config)
     local section = Section.new(self, config or {})
     return section
@@ -3553,11 +3597,26 @@ function Page:Action(text, callback)
     self.ActionBar.Visible = true
     self.ActionBar.Size = UDim2.new(1, 0, 0, 56)
 
+    if self._actionMode == "split" and self.PrimaryButton then
+        self.PrimaryButton.Text = tostring(text or "")
+        for _, connection in ipairs(self.ActionConnections or {}) do
+            Disconnect(connection)
+        end
+        self.ActionConnections = {}
+        table.insert(self.ActionConnections, Connect(self.PrimaryButton.MouseButton1Click, function()
+            if isCallable(callback) then
+                pcall(callback)
+            end
+        end))
+        return self.PrimaryButton
+    end
+
     if not self.ActionButton then
+        local split = self._actionMode == "split"
         self.ActionButton = UI.button({
             Parent = self.ActionBar,
-            Position = UDim2.new(0, 0, 0, 10),
-            Size = UDim2.new(1, 0, 0, 36),
+            Position = split and UDim2.new(0, 104, 0, 10) or UDim2.new(0, 0, 0, 10),
+            Size = split and UDim2.new(1, -104, 0, 36) or UDim2.new(1, 0, 0, 36),
             BackgroundColor3 = accent(),
             Text = "",
             TextSize = Argon.Theme.TextSize,
@@ -3565,11 +3624,72 @@ function Page:Action(text, callback)
             TextColor3 = C("AccentText"),
         })
         UI.corner(UDim.new(0, Argon.Theme.Corner)).Parent = self.ActionButton
+        self.ActionStroke = UI.stroke(C("Text"), 1, 0.9)
+        self.ActionStroke.Parent = self.ActionButton
+
+        -- Four visual states, all of them theme derived: resting, hovered
+        -- (lighter + hairline inner stroke), pressed (darker) and disabled
+        -- (accent washed out, text at 45%). The disabled state also opts out of
+        -- every hover animation, which is what makes a locked button read as
+        -- locked instead of "dead but bright".
+        local function renderActionButton()
+            local disabled = self.ActionEnabled == false
+            if disabled then
+                self.ActionButton.BackgroundColor3 = accent()
+                self.ActionButton.BackgroundTransparency = 0.68
+                self.ActionButton.TextColor3 = C("AccentText")
+                self.ActionStroke.Transparency = 1
+                return
+            end
+            self.ActionButton.BackgroundTransparency = 0
+            self.ActionButton.TextColor3 = C("AccentText")
+            if self.ActionPressed then
+                self.ActionButton.BackgroundColor3 = Color.darken(accent(), 0.1)
+                self.ActionStroke.Transparency = 1
+            elseif self.ActionHovered then
+                self.ActionButton.BackgroundColor3 = Color.lighten(accent(), 0.1)
+                self.ActionStroke.Transparency = 0.82
+            else
+                self.ActionButton.BackgroundColor3 = accent()
+                self.ActionStroke.Transparency = 1
+            end
+        end
+        self.RenderActionButton = renderActionButton
+
         Connect(self.ActionButton.MouseEnter, function()
-            animate(self.ActionButton, { BackgroundColor3 = Color.lighten(accent(), 0.08) }, 0.12)
+            self.ActionHovered = true
+            if self.ActionEnabled ~= false then
+                animate(self.ActionButton, { BackgroundColor3 = Color.lighten(accent(), 0.1) }, 0.12)
+                self.ActionStroke.Transparency = 0.82
+            end
         end)
         Connect(self.ActionButton.MouseLeave, function()
-            animate(self.ActionButton, { BackgroundColor3 = accent() }, 0.12)
+            self.ActionHovered = false
+            self.ActionPressed = false
+            if self.ActionEnabled ~= false then
+                animate(self.ActionButton, { BackgroundColor3 = accent(), BackgroundTransparency = 0 }, 0.12)
+                self.ActionStroke.Transparency = 1
+            end
+        end)
+        Connect(self.ActionButton.InputBegan, function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                self.ActionPressed = true
+                if self.ActionEnabled ~= false then
+                    animate(self.ActionButton, { BackgroundColor3 = Color.darken(accent(), 0.1) }, 0.08)
+                end
+            end
+        end)
+        Connect(self.ActionButton.InputEnded, function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                self.ActionPressed = false
+                if self.ActionEnabled ~= false then
+                    animate(self.ActionButton, {
+                        BackgroundColor3 = self.ActionHovered and Color.lighten(accent(), 0.1) or accent(),
+                    }, 0.1)
+                end
+            end
         end)
     end
 
@@ -3579,6 +3699,11 @@ function Page:Action(text, callback)
     end
     self.ActionConnections = {}
     table.insert(self.ActionConnections, Connect(self.ActionButton.MouseButton1Click, function()
+        -- Executors deliver clicks straight to the signal, so `Active = false`
+        -- is only cosmetic: the handler has to refuse the click itself.
+        if self.ActionEnabled == false then
+            return
+        end
         if callback then
             pcall(callback)
         end
@@ -3590,13 +3715,99 @@ function Page:Action(text, callback)
     return self.ActionButton
 end
 
+-- A two-button footer: a ghost Back and an accent Primary. Named `Footer`
+-- because `ActionBar` is the frame that hosts it. A locked wizard step has to
+-- look locked, so it shares Page:Action's state model.
+function Page:Footer(config)
+    config = config or {}
+    self._actionMode = "split"
+    self.ActionBar.Visible = true
+    self.ActionBar.Size = UDim2.new(1, 0, 0, 56)
+
+    if not self.BackButton then
+        self.BackButton = UI.button({
+            Parent = self.ActionBar,
+            Position = UDim2.new(0, 0, 0, 10),
+            Size = UDim2.new(0, 96, 0, 36),
+            BackgroundColor3 = C("SurfaceHigh"),
+            BackgroundTransparency = 0.25,
+            Text = tostring(config.Back == true and "Back" or (config.Back or "")),
+            TextSize = Argon.Theme.TextSizeSmall,
+            Font = Argon.Theme.FontMedium,
+            TextColor3 = C("Text"),
+        })
+        UI.corner(UDim.new(0, Argon.Theme.Corner)).Parent = self.BackButton
+        self.BackStroke = UI.stroke(C("Stroke"), 1, 0.35)
+        self.BackStroke.Parent = self.BackButton
+
+        Connect(self.BackButton.MouseEnter, function()
+            animate(self.BackButton, { BackgroundColor3 = C("SurfaceActive"), BackgroundTransparency = 0 }, 0.1)
+            animate(self.BackStroke, { Transparency = 0.15 }, 0.1)
+        end)
+        Connect(self.BackButton.MouseLeave, function()
+            animate(self.BackButton, { BackgroundColor3 = C("SurfaceHigh"), BackgroundTransparency = 0.25 }, 0.1)
+            animate(self.BackStroke, { Transparency = 0.35 }, 0.1)
+        end)
+        Connect(self.BackButton.MouseButton1Click, function()
+            if isCallable(config.OnBack) then
+                pcall(config.OnBack, self)
+            end
+        end)
+    end
+
+    local primary = self:Action(tostring(config.Primary or config.Next or "Continue"), config.OnPrimary)
+    self.PrimaryButton = primary
+    self:SetPrimaryEnabled(config.Disabled == false and true or (config.Enabled ~= false and config.Disabled ~= true))
+    self:SetBackVisible(config.Back ~= false and config.Back ~= nil)
+    return self
+end
+
+function Page:SetPrimaryText(text)
+    if self.PrimaryButton then
+        self.PrimaryButton.Text = tostring(text or "")
+    end
+    return self
+end
+
+function Page:SetPrimaryEnabled(enabled)
+    if self.PrimaryButton then
+        self.ActionEnabled = enabled ~= false
+        self.PrimaryButton.Active = self.ActionEnabled
+        if self.RenderActionButton then
+            self.RenderActionButton()
+        end
+    end
+    return self
+end
+
+function Page:SetBackVisible(visible)
+    if self.BackButton then
+        self.BackButton.Visible = visible ~= false
+    end
+    return self
+end
+
+function Page:SetBackText(text)
+    if self.BackButton then
+        self.BackButton.Text = tostring(text or "")
+    end
+    return self
+end
+
 function Page:SetActionEnabled(enabled)
+    self.ActionEnabled = enabled ~= false
     if not self.ActionButton then
         return self
     end
-    self.ActionButton.Active = enabled ~= false
-    self.ActionButton.BackgroundTransparency = enabled == false and 0.6 or 0
+    self.ActionButton.Active = self.ActionEnabled
+    if self.RenderActionButton then
+        self.RenderActionButton()
+    end
     return self
+end
+
+function Page:IsActionEnabled()
+    return self.ActionEnabled ~= false
 end
 
 function Page:SetSubtitle(text)
@@ -3712,8 +3923,14 @@ function Page:Destroy()
             break
         end
     end
+    if self.Window.ActivePage == self then
+        self.Window.ActivePage = nil
+    end
     DestroyInstance(self.Frame)
     self.Window:RebuildNav()
+    if not self.Window.Destroyed then
+        self.Window:UpdateChrome(false)
+    end
 end
 
 -- ============================================================================
@@ -3749,6 +3966,37 @@ function Window.new(options)
     self.Resizable = options.Resizable ~= false
     self.RailWidth = tonumber(options.RailWidth) or Argon.Theme.RailWidth
     self.SidebarWidth = tonumber(options.SidebarWidth) or Argon.Theme.SidebarWidth
+
+    -- chrome layout -------------------------------------------------------
+    -- Layout = "side"  : rail + sidebar + page pane, luau.pro style. While the
+    --                    pointer is outside the window the sidebar is collapsed,
+    --                    and when no page is open the window is the rail alone.
+    -- Layout = "square" : one narrow column -- rail + page pane, no sidebar.
+    -- `Width` always describes the *expanded* window, so the opened state is
+    -- exactly the size the script asked for.
+    self.Layout = (options.Layout == "square") and "square" or "side"
+    self.HoverOpen = options.HoverOpen ~= false
+    self.CollapseDelay = tonumber(options.CollapseDelay) or 0.14
+    self.AutoClosePage = options.AutoClosePage ~= false
+    if type(options.RailOnly) == "boolean" then
+        self.RailOnly = options.RailOnly
+    else
+        self.RailOnly = self.Layout == "side"
+    end
+    if self.Layout == "square" then
+        self.HoverOpen = false
+        self.ShowSidebar = false
+        self.AutoClosePage = false
+    end
+    if Argon.IsMobile and Argon:IsMobile() then
+        self.HoverOpen = false
+    end
+    self.hovered = false
+    self.SidebarShown = not self.HoverOpen
+    self.EffectiveWidth = tonumber(options.Width) or self.Width
+    self._chromeShift = 0
+    self._hoverToken = nil
+    self._hoverProbe = nil
 
     WindowZ = WindowZ + 1
     self.Gui = createScreenGui("Argon_" .. tostring(WindowZ), (options.DisplayOrder or 100) + WindowZ)
@@ -3792,6 +4040,307 @@ function Window.new(options)
         end
     end
 
+    return self
+end
+
+-- ---------------------------------------------------------------------------
+-- 15b. WINDOW CHROME -- rail / sidebar / page visibility
+--
+-- The whole shell is driven by two booleans, exactly like the reference:
+--
+--   SidebarShown = hovered          (only when HoverOpen, otherwise always true)
+--   PageShown    = ActivePage ~= nil (only when RailOnly, otherwise always true)
+--
+-- Everything else -- width, content offset, shadow, position compensation -- is
+-- derived, so a page can never end up half outside the window.
+-- ---------------------------------------------------------------------------
+
+function Window:IsHoverLayout()
+    return self.Layout == "side" and self.HoverOpen and self.ShowSidebar == true
+end
+
+function Window:RailWidthPx()
+    return self.ShowRail and self.RailWidth or 0
+end
+
+function Window:SidebarWidthPx()
+    if self.ShowSidebar and self.SidebarShown then
+        return self.SidebarWidth
+    end
+    return 0
+end
+
+function Window:PageShown()
+    if not self.RailOnly then
+        return true
+    end
+    return self.ActivePage ~= nil and true or false
+end
+
+-- The page pane is whatever is left of the requested (expanded) width once the
+-- rail and the sidebar have taken their share.
+function Window:PaneWidth()
+    local pane = self.Width - self:RailWidthPx()
+    if self.ShowSidebar then
+        pane = pane - self.SidebarWidth
+    end
+    return math.max(280, pane)
+end
+
+function Window:CurrentWidth()
+    if self.Layout == "square" or (not self:IsHoverLayout() and not self.RailOnly) then
+        return self.Width
+    end
+    local width = self:RailWidthPx() + self:SidebarWidthPx()
+    if self:PageShown() then
+        width = width + self:PaneWidth()
+    end
+    if width <= self:RailWidthPx() then
+        -- nothing but the rail: report the rail exactly, like the reference does
+        return self:RailWidthPx() > 0 and self:RailWidthPx() or 200
+    end
+    return width
+end
+
+function Window:CurrentHeight()
+    return self.Minimized and 54 or self.Height
+end
+
+-- Growing the window has to keep the *left* edge still, the way the reference
+-- does, otherwise the rail visibly slides every time the pointer comes near.
+-- The window is anchored at its centre, so half of the delta is pushed right.
+function Window:_applyPosition(animated)
+    if not self.Main then
+        return
+    end
+    local width = self:CurrentWidth()
+    local delta = width - (self._lastWidth or width)
+    self._lastWidth = width
+    if delta ~= 0 then
+        local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+            or Vector2.new(1920, 1080)
+        self._chromeShift = self._chromeShift + delta / 2
+        local left = viewport.X / 2 + self._chromeShift - width / 2
+        if left < 8 then
+            self._chromeShift = self._chromeShift + (8 - left)
+        elseif left + width > viewport.X - 8 then
+            self._chromeShift = self._chromeShift - (left + width - (viewport.X - 8))
+        end
+    end
+    local position = UDim2.new(0.5, self._chromeShift, 0.5, 0)
+    local size = UDim2.new(0, width, 0, self:CurrentHeight())
+    if animated then
+        animate(self.Main, { Size = size, Position = position }, 0.14)
+    else
+        self.Main.Size = size
+        self.Main.Position = position
+    end
+    if self.Shadow then
+        local shadowSize = UDim2.new(0, width + 6, 0, self:CurrentHeight() + 10)
+        local shadowPosition = UDim2.new(0.5, self._chromeShift, 0.5, 6)
+        if animated then
+            animate(self.Shadow, { Size = shadowSize, Position = shadowPosition }, 0.14)
+        else
+            self.Shadow.Size = shadowSize
+            self.Shadow.Position = shadowPosition
+        end
+    end
+end
+
+function Window:UpdateChrome(animated)
+    if self.Destroyed or not self.Main then
+        return self
+    end
+
+    self.EffectiveWidth = self:CurrentWidth()
+
+    if self.Sidebar then
+        local sidebarWidth = self:SidebarWidthPx()
+        local size = UDim2.new(0, sidebarWidth, 1, 0)
+        local visible = self.SidebarShown and sidebarWidth > 0
+        if animated then
+            animate(self.Sidebar, { Size = size }, 0.14)
+        else
+            self.Sidebar.Size = size
+        end
+        self.Sidebar.Visible = visible
+        if self.RailDivider then
+            self.RailDivider.Visible = true
+        end
+    end
+
+    if self.Content then
+        local offset = self:RailWidthPx() + self:SidebarWidthPx()
+        local size = UDim2.new(1, -offset, 1, 0)
+        if animated then
+            animate(self.Content, { Position = UDim2.new(0, offset, 0, 0) }, 0.14)
+        else
+            self.Content.Position = UDim2.new(0, offset, 0, 0)
+        end
+        self.Content.Size = size
+        self.Content.Visible = self:PageShown()
+    end
+
+    self:_applyPosition(animated)
+    return self
+end
+
+function Window:PaneVisible()
+    return self.Content ~= nil and self.Content.Visible == true
+end
+
+-- The hover flag is a single pointer/rect test, not MouseEnter/MouseLeave.
+-- Per-child enter/leave is what makes a collapsing panel stick: the topmost
+-- object under the cursor changes as the sidebar slides, MouseLeave fires on
+-- the frame the pointer never left, and the flag is stranded mid-transition.
+function Window:ProbePointer(immediate)
+    if self.Destroyed or not self.Main or not self:GetVisible() then
+        return
+    end
+    local ok, location = pcall(function()
+        return UserInputService:GetMouseLocation()
+    end)
+    if not ok or not location then
+        return
+    end
+    local position = self.Main.AbsolutePosition
+    local size = self.Main.AbsoluteSize
+    local inside = location.X >= position.X - 2
+        and location.X <= position.X + size.X + 2
+        and location.Y >= position.Y - 2
+        and location.Y <= position.Y + size.Y + 2
+    if inside ~= self.hovered then
+        self:SetHovered(inside, immediate)
+    end
+end
+
+function Window:SetHovered(hovered, immediate)
+    hovered = hovered and true or false
+    if self.hovered == hovered then
+        return self
+    end
+
+    if self._hoverToken then
+        task.cancel(self._hoverToken)
+        self._hoverToken = nil
+    end
+
+    -- Leaving is delayed and re-probed, so crossing onto a tooltip or a
+    -- transient child can't close the sidebar the user is reaching for.
+    if not hovered and not immediate and self.CollapseDelay > 0 then
+        self._hoverToken = task.delay(self.CollapseDelay, function()
+            self._hoverToken = nil
+            -- Re-probe and apply: a second deferred call would defer again and
+            -- the sidebar would never close.
+            self:ProbePointer(true)
+        end)
+        return self
+    end
+
+    self.hovered = hovered
+    if self:IsHoverLayout() then
+        self.SidebarShown = hovered
+    end
+    self:UpdateChrome(true)
+    return self
+end
+
+function Window:StartPointerTracking()
+    if not self:IsHoverLayout() or self._hoverProbe then
+        return self
+    end
+
+    self._hoverProbe = {
+        Connect(UserInputService.InputChanged, function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement then
+                self:ProbePointer()
+            end
+        end),
+        Connect(UserInputService.InputBegan, function()
+            self:ProbePointer()
+        end),
+    }
+
+    -- A window opened under a stationary cursor never receives a movement
+    -- event, so the first few frames are probed by hand.
+    local frame = 0
+    local step
+    step = function()
+        if self.Destroyed then
+            return
+        end
+        self:ProbePointer()
+        frame = frame + 1
+        if frame < 3 then
+            task.defer(step)
+        end
+    end
+    task.defer(step)
+    return self
+end
+
+function Window:SetLayout(layout)
+    self.Layout = (layout == "square") and "square" or "side"
+    if self.Layout == "square" then
+        self.HoverOpen = false
+        self.ShowSidebar = false
+        self.AutoClosePage = false
+        self.SidebarShown = false
+    else
+        self.ShowSidebar = true
+        self.HoverOpen = true
+        self.AutoClosePage = true
+        self.SidebarShown = self.hovered
+    end
+    if self.Sidebar then
+        self.Sidebar.Visible = self.SidebarShown
+    end
+    self:UpdateChrome(true)
+    self:StartPointerTracking()
+    return self
+end
+
+-- Rail only: the shell collapses to the icon rail, exactly like the reference
+-- with the pointer away and no page open.
+function Window:SetRailOnly(railOnly)
+    self.RailOnly = railOnly and true or false
+    if self.RailOnly and self.ActivePage then
+        self.ActivePage:SetVisible(false)
+        self.ActivePage = nil
+    end
+    self:UpdateChrome(true)
+    return self
+end
+
+function Window:GetVisible()
+    return self.Visible ~= false and self.Gui ~= nil and self.Gui.Enabled ~= false
+end
+
+function Window:OpenPage(page)
+    self:SelectPage(page)
+    return self
+end
+
+function Window:ClosePage()
+    if self.ActivePage then
+        local page = self.ActivePage
+        page:SetVisible(false)
+        if page.NavItem then
+            page.NavItem.BackgroundColor3 = C("Surface")
+            page.NavItem.BackgroundTransparency = 1
+            page.NavLabel.TextColor3 = C("TextMuted")
+            page.NavIcon.TextColor3 = C("TextMuted")
+        end
+        if page.RailButton then
+            page.RailButton.BackgroundTransparency = 1
+            page.RailIconLabel.TextColor3 = C("TextDim")
+            if page.RailIndicator then
+                page.RailIndicator.Visible = false
+            end
+        end
+        self.ActivePage = nil
+    end
+    self:UpdateChrome(true)
     return self
 end
 
@@ -3842,8 +4391,33 @@ function Window:BuildShell()
             Parent = self.Rail,
             AnchorPoint = Vector2.new(0, 1),
             Position = UDim2.new(0, 0, 1, -10),
-            Size = UDim2.new(1, 0, 0, 84),
+            Size = UDim2.new(1, 0, 0, 112),
         })
+
+        -- When the shell is collapsed to the rail the window is 52px wide: the
+        -- sidebar (which owns the logo drag handle) and the corner controls are
+        -- clipped away. The rail has to carry both jobs or the user is stuck with
+        -- a strip they can neither move nor hide.
+        self.RailHide = UI.button({
+            Parent = self.RailBottom,
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 74),
+            Size = UDim2.new(0, 32, 0, 26),
+            BackgroundTransparency = 1,
+            Text = "⏋",
+            TextSize = 14,
+            TextColor3 = theme.TextDim,
+        })
+        attachTooltip(self.RailHide, "Hide menu")
+        Connect(self.RailHide.MouseEnter, function()
+            animate(self.RailHide, { TextColor3 = theme.Text }, 0.1)
+        end)
+        Connect(self.RailHide.MouseLeave, function()
+            animate(self.RailHide, { TextColor3 = theme.TextDim }, 0.1)
+        end)
+        Connect(self.RailHide.MouseButton1Click, function()
+            self:SetVisible(false)
+        end)
 
         local avatar = UI.frame({
             Parent = self.RailBottom,
@@ -4103,11 +4677,15 @@ function Window:BuildShell()
             Text = "",
         })
         makeResizable(self.Main, self.ResizeHandle, {
-            Min = Vector2.new(tonumber(self.Options.MinWidth) or 520, tonumber(self.Options.MinHeight) or 360),
+            Min = Vector2.new(
+                tonumber(self.Options.MinWidth) or (self.Layout == "square" and 300 or 520),
+                tonumber(self.Options.MinHeight) or 360
+            ),
             Max = Vector2.new(1600, 1000),
             onResize = function(size)
                 self.Width, self.Height = size.X, size.Y
-                self.Shadow.Size = UDim2.new(0, size.X + 6, 0, size.Y + 10)
+                self.Shadow.Size = UDim2.new(0, self:CurrentWidth() + 6, 0, size.Y + 10)
+                self:UpdateChrome(false)
                 if self.UpdateLayout then
                     self:UpdateLayout()
                 end
@@ -4116,6 +4694,20 @@ function Window:BuildShell()
     end
 
     makeDraggable(self.Main, self.Sidebar and self.LogoRow or self.Main, { bounds = true })
+
+    if self.Rail then
+        -- Dragging the rail background moves the window, but a press that starts
+        -- on a rail button must not, or clicking a page would drag the shell.
+        makeDraggable(self.Main, self.Rail, {
+            bounds = true,
+            shouldDrag = function(input, handle)
+                return input.Target == nil or input.Target == handle
+            end,
+        })
+    end
+
+    self:UpdateChrome(false)
+    self:StartPointerTracking()
 
     if self.ShowThemeSwitch then
         self:RefreshThemeSwitch()
@@ -4127,6 +4719,9 @@ function Window:BuildShell()
         self.Shadow.BackgroundColor3 = palette.Accent
         if self.Rail then
             self.Rail.BackgroundColor3 = palette.Rail
+            if self.RailHide then
+                self.RailHide.TextColor3 = palette.TextDim
+            end
         end
         if self.Sidebar then
             self.Sidebar.BackgroundColor3 = palette.Sidebar
@@ -4149,6 +4744,13 @@ function Window:BuildShell()
         self.MinimizeButton.TextColor3 = palette.TextMuted
         self.CloseButton.TextColor3 = palette.TextMuted
     end)
+end
+
+function Window:SetRailHideVisible(visible)
+    if self.RailHide then
+        self.RailHide.Visible = visible ~= false
+    end
+    return self
 end
 
 function Window:RefreshThemeSwitch()
@@ -4367,6 +4969,7 @@ function Window:SelectPage(page)
     end
 
     self.ActivePage = page
+    self:UpdateChrome(true)
 
     for _, candidate in ipairs(self.Pages) do
         candidate:SetVisible(candidate == page)
@@ -4448,14 +5051,7 @@ end
 
 function Window:SetMinimized(minimized)
     self.Minimized = minimized and true or false
-    if self.Minimized then
-        self._restoreHeight = self.Height
-        self.Main.Size = UDim2.new(0, self.Width, 0, 54)
-        self.Shadow.Size = UDim2.new(0, self.Width + 6, 0, 60)
-    else
-        self.Main.Size = UDim2.new(0, self.Width, 0, self.Height)
-        self.Shadow.Size = UDim2.new(0, self.Width + 6, 0, self.Height + 10)
-    end
+    self:UpdateChrome(false)
     return self
 end
 
@@ -4500,11 +5096,23 @@ function Window:Refresh()
     return self
 end
 
+function Window:DestroyProbe()
+    if self._hoverToken then
+        pcall(task.cancel, self._hoverToken)
+        self._hoverToken = nil
+    end
+    for _, connection in ipairs(self._hoverProbe or {}) do
+        Disconnect(connection)
+    end
+    self._hoverProbe = nil
+end
+
 function Window:Destroy()
     if self.Destroyed then
         return
     end
     self.Destroyed = true
+    self:DestroyProbe()
     for _, page in ipairs(self.Pages) do
         page.Destroyed = true
     end
@@ -6894,6 +7502,7 @@ function Section:Card(config, callback)
         Size = UDim2.new(1, 0, 1, 0),
         Text = "",
     })
+    element.Hitbox = hitbox
 
     local function renderSelection(animated)
         local targetStroke = element.Selected and C("Accent") or C("Stroke")
@@ -6974,6 +7583,36 @@ function Section:Card(config, callback)
         end
     end)
 
+    Connect(hitbox.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            element.Pressed = true
+            if not element.Selected then
+                animate(element.Row, { BackgroundColor3 = C("SurfaceActive") }, 0.08)
+            end
+        end
+    end)
+
+    Connect(hitbox.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            element.Pressed = false
+            if not element.Selected then
+                animate(element.Row, {
+                    BackgroundColor3 = element.Hovering and C("SurfaceHover") or C("Surface"),
+                    BackgroundTransparency = element.Hovering and 0.15 or 0.4,
+                }, 0.1)
+            end
+        end
+    end)
+
+    Connect(hitbox.MouseEnter, function()
+        element.Hovering = true
+    end)
+    Connect(hitbox.MouseLeave, function()
+        element.Hovering = false
+    end)
+
     Connect(hitbox.MouseButton1Click, function()
         if element.Disabled then
             return
@@ -6993,6 +7632,628 @@ function Section:Card(config, callback)
     end)
 
     renderSelection(false)
+    return element
+end
+
+-- ============================================================================
+-- 33b. COMPONENTS -- WIZARD, STAT CARDS, FILE PICKERS, CALLOUTS, CARD LISTS
+--
+-- These exist because the reference shell is not just toggles and sliders: the
+-- "Autobuild Classic" screen is a 4-step wizard with a file picker, a stat card
+-- with its own menu button, a checkbox callout and a Back / Continue footer.
+-- ============================================================================
+
+-- Segmented progress: `n` bars, filled up to `Current`. The active bar is the
+-- accent, completed bars are the accent at lower alpha, pending bars are the
+-- surface stroke. Caption sits under the bars in tiny type.
+function Section:Steps(config, callback)
+    config = config or {}
+
+    local element = Element.new(self, config)
+    local total = math.max(1, math.floor(tonumber(config.Total) or 4))
+    local current = Math.clamp(math.floor(tonumber(config.Current) or 1), 0, total)
+    local height = tonumber(config.Height) or 46
+
+    element.Total = total
+    element.Current = current
+    element.Caption = tostring(config.Caption or "")
+
+    element.Row.Size = UDim2.new(1, 0, 0, height)
+    element.Row.AutomaticSize = Enum.AutomaticSize.None
+
+    local barHolder = UI.transparent({
+        Parent = element.Row,
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 4),
+    })
+    element.BarLayout = UI.listLayout(6, true, Enum.HorizontalAlignment.Left)
+    element.BarLayout.Parent = barHolder
+    element.Segments = {}
+
+    for index = 1, total do
+        local segment = UI.frame({
+            Parent = barHolder,
+            Size = UDim2.new(1 / total, -6, 0, 4),
+            BackgroundColor3 = C("Stroke"),
+            BackgroundTransparency = 0.2,
+        })
+        UI.corner(UDim.new(0, 3)).Parent = segment
+        table.insert(element.Segments, segment)
+    end
+
+    element.CaptionLabel = UI.label({
+        Parent = element.Row,
+        Position = UDim2.new(0, 0, 0, 14),
+        Size = UDim2.new(1, 0, 0, 14),
+        Text = element.Caption,
+        TextSize = Argon.Theme.TextSizeTiny,
+        TextColor3 = C("TextDim"),
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+
+    function element:Render()
+        for index, segment in ipairs(element.Segments) do
+            if index < element.Current then
+                segment.BackgroundColor3 = C("Accent")
+                segment.BackgroundTransparency = 0.45
+            elseif index == element.Current then
+                segment.BackgroundColor3 = C("Accent")
+                segment.BackgroundTransparency = 0
+            else
+                segment.BackgroundColor3 = C("Stroke")
+                segment.BackgroundTransparency = 0.2
+            end
+        end
+        element.CaptionLabel.Text = element.Caption
+    end
+
+    function element:SetCurrent(current, caption)
+        element.Current = Math.clamp(math.floor(tonumber(current) or 1), 0, element.Total)
+        if caption ~= nil then
+            element.Caption = tostring(caption)
+        end
+        element:Render()
+        if isCallable(config.OnChange) then
+            pcall(config.OnChange, element.Current, element.Total, element)
+        end
+        if isCallable(callback) then
+            pcall(callback, element.Current, element.Total, element)
+        end
+        element:Fire(element.Current)
+        return self
+    end
+
+    function element:Next(caption)
+        return element:SetCurrent(element.Current + 1, caption)
+    end
+
+    function element:Prev(caption)
+        return element:SetCurrent(element.Current - 1, caption)
+    end
+
+    function element:SetCaption(text)
+        element.Caption = tostring(text or "")
+        element:Render()
+        return self
+    end
+
+    function element:Finish()
+        return element:SetCurrent(element.Total + 1)
+    end
+
+    element:applyTheme(function()
+        element:Render()
+    end)
+    element:Render()
+    return element
+end
+
+-- A bordered summary card with a title row, a "..." menu button, divider rows of
+-- label / value text and an optional meter. Used by the reference for
+-- "Buildability" ("You own 0 of 1 required blocks", "1 blocks - 0 types").
+function Section:StatCard(config)
+    config = config or {}
+
+    local element = Element.new(self, config)
+    local rows = config.Rows or {}
+    element.Value = config.Value
+    element.Fields = {}
+
+    local height = tonumber(config.Height) or (64 + #rows * 26)
+    element.Row.Size = UDim2.new(1, 0, 0, height)
+    element.Row.AutomaticSize = Enum.AutomaticSize.None
+    element.Row.BackgroundColor3 = C("Surface")
+    element.Row.BackgroundTransparency = 0.35
+    UI.corner(UDim.new(0, 10)).Parent = element.Row
+    element.Stroke = UI.stroke(C("Stroke"), 1, 0.25)
+    element.Stroke.Parent = element.Row
+
+    element.NameLabel = UI.label({
+        Parent = element.Row,
+        Position = UDim2.new(0, 12, 0, 12),
+        Size = UDim2.new(1, -70, 0, 16),
+        Text = tostring(config.Name or "Stat"),
+        TextSize = Argon.Theme.TextSize,
+        Font = Argon.Theme.FontMedium,
+        TextColor3 = C("Text"),
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+
+    if config.Menu ~= false then
+        element.MenuButton = UI.button({
+            Parent = element.Row,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -8, 0, 8),
+            Size = UDim2.new(0, 30, 0, 22),
+            BackgroundColor3 = C("SurfaceHigh"),
+            BackgroundTransparency = 0.25,
+            Text = "⋯",
+            TextSize = 12,
+            TextColor3 = C("TextMuted"),
+        })
+        UI.corner(UDim.new(0, 6)).Parent = element.MenuButton
+        Connect(element.MenuButton.MouseEnter, function()
+            animate(element.MenuButton, { BackgroundColor3 = C("SurfaceActive"), BackgroundTransparency = 0 }, 0.1)
+        end)
+        Connect(element.MenuButton.MouseLeave, function()
+            animate(element.MenuButton, { BackgroundColor3 = C("SurfaceHigh"), BackgroundTransparency = 0.25 }, 0.1)
+        end)
+        Connect(element.MenuButton.MouseButton1Click, function()
+            if isCallable(config.OnMenu) then
+                pcall(config.OnMenu, element)
+            end
+            element:Fire("menu", element)
+        end)
+    end
+
+    local function addRow(index, row)
+        local label = tostring(row.Label or row.Text or row[1] or "")
+        local value = row.Value or row[2]
+        local y = 38 + (index - 1) * 26
+        local entry = {}
+
+        entry.Label = UI.label({
+            Parent = element.Row,
+            Position = UDim2.new(0, 12, 0, y),
+            Size = UDim2.new(1, -(value == nil and 24 or 80), 0, 14),
+            Text = label,
+            TextSize = Argon.Theme.TextSizeTiny,
+            TextColor3 = C("TextDim"),
+            TextTruncate = Enum.TextTruncate.AtEnd,
+        })
+
+        if value ~= nil then
+            entry.Value = UI.label({
+                Parent = element.Row,
+                AnchorPoint = Vector2.new(1, 0),
+                Position = UDim2.new(1, -12, 0, y),
+                Size = UDim2.new(0, 60, 0, 14),
+                Text = tostring(value),
+                TextSize = Argon.Theme.TextSizeTiny,
+                Font = Argon.Theme.FontMedium,
+                TextColor3 = C("Text"),
+                TextXAlignment = Enum.TextXAlignment.Right,
+            })
+        end
+
+        if row.Meter then
+            entry.MeterTrack = UI.frame({
+                Parent = element.Row,
+                Position = UDim2.new(0, 12, 0, y + 16),
+                Size = UDim2.new(1, -24, 0, 3),
+                BackgroundColor3 = C("Stroke"),
+                BackgroundTransparency = 0.4,
+            })
+            UI.corner(UDim.new(0, 2)).Parent = entry.MeterTrack
+            entry.MeterFill = UI.frame({
+                Parent = entry.MeterTrack,
+                Size = UDim2.new(Math.clamp((tonumber(row.Percent) or 0) / 100, 0, 1), 0, 1, 0),
+                BackgroundColor3 = C("Accent"),
+            })
+            UI.corner(UDim.new(0, 2)).Parent = entry.MeterFill
+            entry.Percent = tonumber(row.Percent) or 0
+        end
+
+        table.insert(element.Fields, entry)
+    end
+
+    for index, row in ipairs(rows) do
+        addRow(index, type(row) == "table" and row or { Text = tostring(row) })
+    end
+
+    function element:SetRow(index, value)
+        local entry = element.Fields[index]
+        if not entry then
+            return self
+        end
+        if entry.Value then
+            entry.Value.Text = tostring(value)
+        elseif entry.Label then
+            entry.Label.Text = tostring(value)
+        end
+        return self
+    end
+
+    function element:SetMeter(index, percent)
+        local entry = element.Fields[index]
+        if not entry or not entry.MeterFill then
+            return self
+        end
+        entry.Percent = Math.clamp(tonumber(percent) or 0, 0, 100)
+        animate(entry.MeterFill, { Size = UDim2.new(entry.Percent / 100, 0, 1, 0) }, 0.2)
+        return self
+    end
+
+    Connect(element.Row.MouseEnter, function()
+        animate(element.Stroke, { Color = C("StrokeLight"), Transparency = 0.05 }, 0.12)
+    end)
+    Connect(element.Row.MouseLeave, function()
+        animate(element.Stroke, { Color = C("Stroke"), Transparency = 0.25 }, 0.12)
+    end)
+
+    element:applyTheme(function(theme)
+        element.Row.BackgroundColor3 = theme.Surface
+        element.Stroke.Color = theme.Stroke
+        element.NameLabel.TextColor3 = theme.Text
+        for _, entry in ipairs(element.Fields) do
+            if entry.Label then
+                entry.Label.TextColor3 = theme.TextDim
+            end
+            if entry.Value then
+                entry.Value.TextColor3 = theme.Text
+            end
+            if entry.MeterTrack then
+                entry.MeterTrack.BackgroundColor3 = theme.Stroke
+                entry.MeterFill.BackgroundColor3 = theme.Accent
+            end
+        end
+    end)
+    return element
+end
+
+-- Label above a field with a placeholder, a trailing button and a hover stroke.
+function Section:FileRow(config, callback)
+    config = config or {}
+
+    local element = Element.new(self, config)
+    element.Value = config.Default
+    local height = tonumber(config.Height) or 62
+
+    element.Row.Size = UDim2.new(1, 0, 0, height)
+    element.Row.AutomaticSize = Enum.AutomaticSize.None
+
+    element.CaptionLabel = UI.label({
+        Parent = element.Row,
+        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 12),
+        Text = string.upper(tostring(config.Name or "File")),
+        TextSize = Argon.Theme.TextSizeTiny,
+        Font = Argon.Theme.FontMedium,
+        TextColor3 = C("TextDim"),
+    })
+
+    local field = UI.frame({
+        Parent = element.Row,
+        Position = UDim2.new(0, 0, 0, 18),
+        Size = UDim2.new(1, 0, 0, 36),
+        BackgroundColor3 = C("Input"),
+        BackgroundTransparency = 0,
+    })
+    UI.corner(UDim.new(0, 8)).Parent = field
+    element.Field = field
+    element.FieldStroke = UI.stroke(C("Stroke"), 1, 0.2)
+    element.FieldStroke.Parent = field
+
+    element.ValueLabel = UI.label({
+        Parent = field,
+        Position = UDim2.new(0, 12, 0, 0),
+        Size = UDim2.new(1, -110, 1, 0),
+        Text = tostring(config.Value or config.Placeholder or "Choose a file"),
+        TextSize = Argon.Theme.TextSizeSmall,
+        TextColor3 = config.Value and C("Text") or C("TextDim"),
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+
+    element.Button = UI.button({
+        Parent = field,
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -6, 0.5, 0),
+        Size = UDim2.new(0, 74, 0, 26),
+        BackgroundColor3 = C("SurfaceHigh"),
+        Text = tostring(config.Button or "Browse"),
+        TextSize = Argon.Theme.TextSizeSmall,
+        Font = Argon.Theme.FontMedium,
+        TextColor3 = C("Text"),
+    })
+    UI.corner(UDim.new(0, 6)).Parent = element.Button
+
+    function element:SetValue(value, silent)
+        element.Value = value
+        if element.ValueLabel then
+            element.ValueLabel.Text = tostring(value or config.Placeholder or "Choose a file")
+            element.ValueLabel.TextColor3 = value and C("Text") or C("TextDim")
+        end
+        if not silent then
+            element:Fire(value)
+        end
+        return self
+    end
+
+    Connect(element.Button.MouseEnter, function()
+        animate(element.Button, { BackgroundColor3 = C("SurfaceActive") }, 0.1)
+    end)
+    Connect(element.Button.MouseLeave, function()
+        animate(element.Button, { BackgroundColor3 = C("SurfaceHigh") }, 0.1)
+    end)
+    Connect(element.Button.MouseButton1Click, function()
+        if element.Disabled then
+            return
+        end
+        if isCallable(config.OnBrowse) then
+            pcall(config.OnBrowse, element)
+        end
+        if isCallable(callback) then
+            pcall(callback, element)
+        end
+    end)
+    Connect(field.MouseEnter, function()
+        animate(element.FieldStroke, { Color = C("StrokeLight"), Transparency = 0 }, 0.12)
+    end)
+    Connect(field.MouseLeave, function()
+        animate(element.FieldStroke, { Color = C("Stroke"), Transparency = 0.2 }, 0.12)
+    end)
+
+    element:applyTheme(function(theme)
+        field.BackgroundColor3 = theme.Input
+        element.ValueLabel.TextColor3 = element.Value and theme.Text or theme.TextDim
+        element.CaptionLabel.TextColor3 = theme.TextDim
+        element.Button.BackgroundColor3 = theme.SurfaceHigh
+        element.Button.TextColor3 = theme.Text
+    end)
+    return element
+end
+
+-- Boxed note with a leading glyph and an optional checkbox. `Kind` picks the
+-- accent colour: "check" (toggle, bound to a flag), "info", "warn", "danger".
+function Section:Callout(config, callback)
+    config = config or {}
+
+    local element = Element.new(self, config)
+    local kind = tostring(config.Kind or "check")
+    local isToggle = kind == "check" and (config.Flag ~= nil or isCallable(callback) or isCallable(config.Callback) or config.Default ~= nil)
+    element.Value = config.Default and true or false
+    if config.Default == nil and isToggle then
+        element.Value = true
+    end
+
+    local height = tonumber(config.Height) or 74
+    element.Row.Size = UDim2.new(1, 0, 0, height)
+    element.Row.AutomaticSize = Enum.AutomaticSize.None
+
+    local box = UI.frame({
+        Parent = element.Row,
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = C("Surface"),
+        BackgroundTransparency = 0.4,
+        Active = true,
+    })
+    UI.corner(UDim.new(0, 10)).Parent = box
+    element.Box = box
+    element.BoxStroke = UI.stroke(C("Stroke"), 1, 0.3)
+    element.BoxStroke.Parent = box
+
+    local function kindColor()
+        if kind == "danger" then
+            return C("Danger")
+        elseif kind == "warn" then
+            return C("Warning")
+        elseif kind == "info" then
+            return C("Info")
+        end
+        return C("Accent")
+    end
+
+    if isToggle then
+        element.Checkbox = UI.frame({
+            Parent = box,
+            Position = UDim2.new(0, 12, 0, 12),
+            Size = UDim2.new(0, 18, 0, 18),
+            BackgroundColor3 = kindColor(),
+        })
+        UI.corner(UDim.new(0, 5)).Parent = element.Checkbox
+        element.CheckGlyph = UI.glyph("✓", 11, C("AccentText"), {
+            Parent = element.Checkbox,
+            Size = UDim2.new(1, 0, 1, 0),
+        })
+    else
+        element.Icon = UI.glyph(kind == "danger" and "⚠" or "i", 12, kindColor(), {
+            Parent = box,
+            Position = UDim2.new(0, 12, 0, 12),
+            Size = UDim2.new(0, 18, 0, 18),
+        })
+    end
+
+    element.NameLabel = UI.label({
+        Parent = box,
+        Position = UDim2.new(0, 40, 0, 12),
+        Size = UDim2.new(1, -52, 0, 16),
+        Text = tostring(config.Name or config.Title or "Callout"),
+        TextSize = Argon.Theme.TextSize,
+        Font = Argon.Theme.FontMedium,
+        TextColor3 = C("Text"),
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+
+    element.DescriptionLabel = UI.label({
+        Parent = box,
+        Position = UDim2.new(0, 40, 0, 30),
+        Size = UDim2.new(1, -52, 0, height - 40),
+        Text = tostring(config.Text or config.Description or ""),
+        TextSize = Argon.Theme.TextSizeTiny,
+        TextColor3 = C("TextDim"),
+        TextWrapped = true,
+        TextYAlignment = Enum.TextYAlignment.Top,
+    })
+
+    function element:Render()
+        if element.Checkbox then
+            local tint = kindColor()
+            element.Checkbox.BackgroundColor3 = element.Value and tint or C("SurfaceActive")
+            element.CheckGlyph.TextColor3 = element.Value and C("AccentText") or C("TextDim")
+            element.CheckGlyph.Text = element.Value and "✓" or ""
+        end
+    end
+
+    function element:SetValue(value, silent)
+        element.Value = value and true or false
+        if element.Flag then
+            Argon.Flags[element.Flag] = element.Value
+        end
+        element:Render()
+        if not silent then
+            element:Fire(element.Value)
+            if isCallable(callback) then
+                pcall(callback, element.Value, element)
+            end
+        end
+        return self
+    end
+
+    Connect(box.MouseButton1Click, function()
+        if isToggle and not element.Disabled then
+            element:SetValue(not element.Value)
+        end
+    end)
+    Connect(box.MouseEnter, function()
+        animate(element.BoxStroke, { Color = C("StrokeLight"), Transparency = 0.1 }, 0.12)
+    end)
+    Connect(box.MouseLeave, function()
+        animate(element.BoxStroke, { Color = C("Stroke"), Transparency = 0.3 }, 0.12)
+    end)
+
+    element:applyTheme(function(theme)
+        box.BackgroundColor3 = theme.Surface
+        element.NameLabel.TextColor3 = theme.Text
+        element.DescriptionLabel.TextColor3 = theme.TextDim
+        element:Render()
+    end)
+    element:Render()
+    return element
+end
+
+-- A vertical list of selectable cards. Items may omit `Image`, in which case a
+-- placeholder tile is drawn so every row keeps the same height.
+function Section:CardList(config, callback)
+    config = config or {}
+
+    local element = Element.new(self, config)
+    element.Items = config.Items or {}
+    element.Selected = nil
+    element.Cards = {}
+
+    element.Row.Size = UDim2.new(1, 0, 0, 0)
+    element.Row.AutomaticSize = Enum.AutomaticSize.Y
+    local layout = UI.listLayout(tonumber(config.Gap) or 8)
+    layout.Parent = element.Row
+    element.ListLayout = layout
+
+    local function pick(card, item, index)
+        if config.Select ~= false then
+            for _, other in ipairs(element.Cards) do
+                if other ~= card and other.Selected then
+                    other:Select(false, true)
+                end
+            end
+            element.Selected = card
+            card:Select(true, true)
+        end
+        element:Fire(item, index)
+        if isCallable(config.OnSelect) then
+            pcall(config.OnSelect, item, index, element)
+        end
+        if isCallable(callback) then
+            pcall(callback, item, index, element)
+        end
+        if isCallable(config.OnOpen) then
+            pcall(config.OnOpen, item, index, element)
+        end
+    end
+
+    local function makeCard(item, index)
+        local card = element.Section:Card({
+            Name = item.Name or item.Title or ("Item " .. tostring(index)),
+            Description = item.Text or item.Description or item.Detail or "",
+            Image = item.Image,
+            Glyph = item.Glyph or config.PlaceholderGlyph or "▦",
+            Tint = item.Tint,
+            Badge = item.Badge,
+            BadgeColor = item.BadgeColor,
+            Tier = item.Tier,
+            Height = tonumber(item.Height) or tonumber(config.RowHeight) or 72,
+        })
+
+        card.CardItem = item
+        card.PickCallback = pick
+
+        -- The click is wired here rather than through Card's own callback so the
+        -- closure can see `card`: a local's scope begins after its initializer,
+        -- so `local card = Section:Card(cfg, function() card end)` would read a
+        -- *global* card and silently no-op inside pcall.
+        Connect(card.Hitbox.MouseButton1Click, function()
+            pick(card, item, index)
+        end)
+
+        return card
+    end
+
+    function element:SetItems(items)
+        for _, card in ipairs(element.Cards) do
+            card:Destroy()
+        end
+        element.Cards = {}
+        element.Items = items or {}
+        for index, item in ipairs(element.Items) do
+            table.insert(element.Cards, makeCard(item, index))
+        end
+        element.Selected = nil
+        return self
+    end
+
+    function element:GetSelected()
+        if element.Selected then
+            return element.Selected.CardItem
+        end
+        return nil
+    end
+
+    function element:SelectIndex(index)
+        local card = element.Cards[math.floor(tonumber(index) or 0)]
+        if card then
+            for _, other in ipairs(element.Cards) do
+                if other ~= card and other.Selected then
+                    other:Select(false, true)
+                end
+            end
+            element.Selected = card
+            card:Select(true, true)
+            element:Fire(card.CardItem, index)
+            if isCallable(config.OnSelect) then
+                pcall(config.OnSelect, card.CardItem, index, element)
+            end
+        end
+        return self
+    end
+
+    function element:Filter(query)
+        local needle = string.lower(tostring(query or ""))
+        for _, card in ipairs(element.Cards) do
+            local show = needle == "" or (card.SearchText and card:SearchText(needle))
+            card:SetVisible(show ~= false)
+        end
+        return self
+    end
+
+    element:SetItems(element.Items)
     return element
 end
 

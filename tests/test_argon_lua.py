@@ -18,6 +18,7 @@ ARGON = ROOT / "Argon.lua"
 MOCK = ROOT / "tests" / "roblox_mock.lua"
 SMOKE = ROOT / "tests" / "smoke.lua"
 DOCS = ROOT / "tests" / "docs_api.lua"
+CHROME = ROOT / "tests" / "chrome.lua"
 
 EXPORTS = (
     "Vector2", "Vector3", "UDim", "UDim2", "Color3", "ColorSequence", "NumberSequence",
@@ -67,6 +68,53 @@ def test_smoke_suite_is_substantial(smoke_results):
     assert smoke_results["passed"] >= 120, f"only {smoke_results['passed']} assertions ran"
 
 
+def run_lua_suite(lua, source: str, name: str) -> dict:
+    lua.globals().SUITE_SOURCE = source
+    lua.globals().SUITE_NAME = name
+    results = lua.execute("""
+        local chunk, compileError = load(SUITE_SOURCE, SUITE_NAME)
+        if not chunk then
+            return { passed = 0, failed = 1, messages = { "COMPILE: " .. tostring(compileError) }, mockErrors = {} }
+        end
+        local ok, res = xpcall(chunk, function(err) return debug.traceback(tostring(err)) end)
+        if not ok then
+            return { passed = 0, failed = 1, messages = { "RUNTIME: " .. tostring(res) }, mockErrors = {} }
+        end
+        return res
+    """)
+    return {
+        "passed": int(results["passed"]),
+        "failed": int(results["failed"]),
+        "messages": [str(m) for m in results["messages"].values()],
+        "mock_errors": [str(e) for e in results["mockErrors"].values()]
+        if results["mockErrors"] is not None
+        else [],
+    }
+
+
+@pytest.fixture(scope="module")
+def chrome_results():
+    lua = build_runtime()
+    return run_lua_suite(lua, CHROME.read_text(encoding="utf-8"), "chrome")
+
+
+def test_chrome_state_machine(chrome_results):
+    """The four reference states: rail, rail+sidebar, rail+page, rail+sidebar+page."""
+    assert chrome_results["failed"] == 0, "\n".join(chrome_results["messages"])
+
+
+def test_chrome_suite_is_substantial(chrome_results):
+    assert chrome_results["passed"] >= 80, f"only {chrome_results['passed']} chrome assertions ran"
+
+
+def test_hover_state_machine_exists():
+    """Regression guard: the sidebar must be pointer-rect driven, not per-child
+    MouseEnter, or a collapsing panel strands the hover flag mid-transition."""
+    code = strip_lua_comments(ARGON.read_text(encoding="utf-8"))
+    for symbol in ("ProbePointer", "SetHovered", "UpdateChrome", "GetMouseLocation"):
+        assert symbol in code, f"hover machinery missing: {symbol}"
+
+
 def strip_lua_comments(source: str) -> str:
     source = re.sub(r"--\[(=*)\[.*?\]\1\]", "", source, flags=re.S)
     return "\n".join(line.split("--")[0] for line in source.splitlines())
@@ -98,7 +146,7 @@ def test_public_api_surface():
     lua = build_runtime()
     lib = lua.execute("return loadstring()()")
     for method in (
-        "Window", "Notify", "Dialog", "Toolbar", "Watermark", "SetTheme", "GetTheme",
+        "Window", "Notify", "Dialog", "Toolbar", "Watermark", "SetTheme", "GetTheme",  # noqa
         "GetThemeNames", "SetAccent", "RegisterTheme", "ThemeTemplate", "BuildConfigPage",
         "GetFlag", "SetFlag", "GetFlags", "OnFlagChanged", "SaveConfig", "LoadConfig",
         "GetConfigs", "DeleteConfig", "EnableAutoSave", "BindKey", "UnbindKey",
@@ -118,10 +166,21 @@ def test_public_api_surface():
     for method in (
         "Section", "Pills", "Search", "Action", "SetActionEnabled", "SetPill", "ApplyFilter",
         "Refresh", "ScrollToTop", "SetSubtitle", "SetVisible", "Destroy",
+        # v3 chrome + wizard surface
+        "Footer", "Steps", "StatCard", "FileRow", "Callout", "CardList",
+        "SetPrimaryText", "SetPrimaryEnabled", "SetBackVisible", "SetBackText",
+        "IsActionEnabled",
     ):
         assert page[method] is not None, f"Page:{method} missing"
 
+    for method in ("SetLayout", "SetRailOnly", "SetHovered", "ClosePage", "UpdateChrome",
+                   "CurrentWidth", "PaneWidth", "StartPointerTracking", "DestroyProbe"):
+        assert window[method] is not None, f"Window:{method} missing"
+
     section = page.Section(page, lua.eval("{Name = 'S'}"))
+
+    for method in ("Steps", "StatCard", "FileRow", "Callout", "CardList"):
+        assert section[method] is not None, f"Section:{method} missing"
     for method in (
         "Toggle", "Checkbox", "Slider", "Input", "Textarea", "Keybind", "Button",
         "DualButton", "ColorPicker", "ThemePicker", "Card", "Table", "Label", "Paragraph",
@@ -151,6 +210,6 @@ def test_documented_api_matches_implementation():
     results = lua.execute(DOCS.read_text(encoding="utf-8"))
     failures = [str(m) for m in results["messages"].values()]
     assert int(results["failed"]) == 0, "\n".join(failures)
-    assert int(results["passed"]) >= 60, f"only {int(results['passed'])} doc assertions ran"
+    assert int(results["passed"]) >= 120, f"only {int(results['passed'])} doc assertions ran"
     errors = [str(e) for e in results["mockErrors"].values()]
     assert errors == [], "\n".join(errors)

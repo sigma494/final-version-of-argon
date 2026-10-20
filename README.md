@@ -4,7 +4,12 @@ A single-file UI library for Roblox executor scripts. Built around the dark shel
 luau.pro — icon rail, grouped sidebar, feature-card grid, sticky action bar, live theme
 switcher — with an Iris-style compatibility layer for scripts that already use Iris.
 
-~8,000 lines of plain Lua. No dependencies, no loader chain, no self-fetch, no nested
+v3 adds the two shell shapes (a narrow **square** menu and the wide **side** menu whose
+sidebar slides in only while the pointer is over the window), the hover/press/selected
+states for cards and buttons, and the wizard set: `Steps`, `StatCard`, `FileRow`,
+`Callout`, `CardList`, `Footer`.
+
+9,347 lines of plain Lua. No dependencies, no loader chain, no self-fetch, no nested
 `loadstring`. Everything below ships in `Argon.lua`.
 
 ```lua
@@ -12,7 +17,7 @@ local Argon = loadstring(game:HttpGet("https://raw.githubusercontent.com/sigma49
 
 local Window = Argon:Window({
     Title = "luau.pro",
-    Subtitle = "v2.0.0",
+    Subtitle = "v3.0.0",
     User = { Name = "farmerjoe", Tag = "Premium" },
     ToggleKey = Enum.KeyCode.RightShift,
     Theme = "Aqua",
@@ -31,11 +36,12 @@ Page:Action("Continue", function() print("chosen:", Argon:GetFlag("fov")) end)
 
 | area | what you get |
 | --- | --- |
-| **Shell** | draggable + resizable window, icon rail, grouped sidebar (MAIN / OTHER), logo, user card with tag, Light/Dark switch, minimize/close, toggle key |
+| **Shell** | two layouts (`side` / `square`), hover-driven sidebar, pointer-tracked chrome, draggable + resizable window, icon rail, grouped sidebar (MAIN / OTHER), logo, user card with tag, Light/Dark switch, minimize/close, toggle key |
 | **Pages** | header with subtitle ("8 Features · synced 2m ago"), search field, filter pills (All/Free/Premium), scrolling sections, sticky action bar |
 | **Sections** | collapsible cards with icon, element counter badge, header controls, two-column row packing |
 | **Inputs** | Toggle, Checkbox, Slider (drag + editable value), Input, Textarea, Keybind, Dropdown (single/multi/search), ColorPicker (SV + hue + alpha + hex + presets), ThemePicker |
-| **Content** | Card (thumbnail + status pill), Banner, Table, Progress, Tag, UserRow, Label, Paragraph, Divider, Space, Image |
+| **Content** | Card (thumbnail + status pill, hover/press/selected states), Banner, Table, Progress, Tag, UserRow, Label, Paragraph, Divider, Space, Image |
+| **Wizard** | Steps (segmented progress), StatCard (labelled rows + meter + ⋯ menu), FileRow (Browse field), Callout (checkbox note box), CardList (selectable rows), Page:Footer (Back + Primary) |
 | **Overlays** | toast notifications (kinds, actions), modal dialogs, tooltips, floating toolbar, watermark, loading bar |
 | **State** | flags, listeners, JSON config round-trip (Color3/EnumItem/arrays), autosave, `BuildConfigPage` |
 | **Extras** | global keybind registry, Iris compatibility layer, theme registration, safe unload |
@@ -54,14 +60,15 @@ Or straight from a script:
 local Argon = loadstring(game:HttpGet("https://raw.githubusercontent.com/sigma494/final-version-of-argon/main/Argon.lua"))()
 ```
 
-> While the v2 pull request is still open, `main` does not carry the library yet.
-> Use the branch URL until it is merged:
->
-> ```lua
-> local Argon = loadstring(game:HttpGet(
->     "https://raw.githubusercontent.com/sigma494/final-version-of-argon/arena/4725bffa-final-version-of-argon/Argon.lua"
-> ))()
-> ```
+`main` carries the library, so that URL is the one to paste into a script. Until this PR
+merges, `main` serves v2.0.0 and v3.0.0 lives on the session branch — swap the ref if you
+want to try the new shell early:
+
+```lua
+local Argon = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/sigma494/final-version-of-argon/arena/12fe7d4f-final-version-of-argon/Argon.lua"
+))()
+```
 
 You can also skip the network entirely: save the file and read it back.
 
@@ -88,6 +95,12 @@ local Window = Argon:Window({
     Resizable = true,
     Rail = true,                     -- icon rail on the far left
     Sidebar = true,
+    Layout = "side",                 -- "side" (rail+sidebar+page) or "square" (rail+page)
+    HoverOpen = true,                -- sidebar slides in only while the pointer is inside
+    CollapseDelay = 0.14,            -- grace period before collapsing (s: close instantly)
+    RailOnly = true,                 -- collapse to the rail when no page is open
+    AutoClosePage = true,            -- the page header X closes the pane instead of jumping to page 1
+    Width = 660, Height = 520,       -- Width describes the *expanded* window
     ThemeSwitch = true,              -- Light/Dark pill in the sidebar
     DisplayOrder = 100,
     AutoLoad = "default",            -- load a config on build
@@ -95,9 +108,45 @@ local Window = Argon:Window({
 })
 ```
 
-Methods: `Page`, `SelectPage`, `GetPage`, `SetTitle`, `SetSubtitle`, `SetUser`,
+Methods: `Page`, `SelectPage`, `ClosePage`, `GetPage`, `SetTitle`, `SetSubtitle`, `SetUser`,
 `SetTheme`, `SetAccent`, `SetMinimized`, `SetVisible`, `Toggle`, `Refresh`, `Notify`,
-`Dialog`, `OnFlagChanged`, `Destroy`.
+`Dialog`, `OnFlagChanged`, `SetLayout`, `SetRailOnly`, `SetHovered`, `UpdateChrome`,
+`CurrentWidth`, `PaneWidth`, `Destroy`.
+
+### Shell shapes
+
+`Layout = "side"` reproduces the reference exactly. Two booleans drive everything —
+whether the pointer is over the window, and whether a page is open:
+
+| pointer over window | page open | result |
+| --- | --- | --- |
+| no | yes | rail + page (sidebar collapsed) |
+| yes | yes | rail + sidebar + page |
+| no | no | rail alone |
+| yes | no | rail + sidebar (nav only, no pane) |
+
+The width grows and shrinks around a still left edge, so the rail never slides when you
+reach for the menu. `HoverOpen = false` pins the sidebar open (v2 behaviour); on touch
+devices hover is ignored automatically.
+
+`Layout = "square"` builds one narrow column — rail plus page, no sidebar at all — for a
+~380px menu:
+
+```lua
+local Square = Argon:Window({ Title = "Argon", Layout = "square", Width = 380, Height = 560 })
+Square:SetLayout("side")     -- switch live, no rebuild
+Square:SetRailOnly(true)     -- collapse to the icon rail
+Square:SetHovered(true)      -- force the sidebar open (tests, scripts, keybinds)
+Square:ClosePage()            -- hide the pane, keep the rail
+Square:SetRailHideVisible(true)  -- the ⏋ control at the bottom of the rail
+```
+
+Collapsed to the rail the window is only ~52px wide, so the sidebar's logo drag handle and
+the corner controls are clipped away. The rail therefore carries both jobs: pressing its
+background moves the window (presses that start on a rail button do not, or clicking a page
+would drag the shell), and `RailHide` at the bottom hides it. `ToggleKey` still works either
+way.
+```
 
 ## Pages
 
@@ -124,13 +173,89 @@ Autobuilds:Pills({
 })
 
 Autobuilds:Action("Select a feature", function() end)   -- sticky bottom button
-Autobuilds:SetActionEnabled(false)
+Autobuilds:SetActionEnabled(false)                      -- dimmed, and clicks are refused
+
+-- Two-button footer for wizards: ghost Back + accent Primary.
+Autobuilds:Footer({
+    Back = true,
+    Primary = "Choose a build file",
+    Disabled = true,
+    OnBack = function() end,
+    OnPrimary = function() end,
+})
+Autobuilds:SetPrimaryText("Continue")
+Autobuilds:SetPrimaryEnabled(true)
+Autobuilds:SetBackVisible(false)
 Autobuilds:Search("autobuild")                          -- set the query programmatically
 Autobuilds:ScrollToTop()
 ```
 
 Cards carry a `Tier` (`"free"` / `"premium"`) and are hidden automatically when a pill
-filter or the search query excludes them.
+filter or the search query excludes them. Each card has four states, all theme derived:
+idle, hovered (lighter fill + brighter hairline), pressed, and selected (accent ring,
+2px stroke).
+
+### Wizard set
+
+The reference's "Autobuild Classic" screen is a 4-step wizard, so the library ships the
+pieces for it. Every one of them is also available directly on a `Page` (`Page:Steps`,
+`Page:StatCard`, …), which files them into an implicit section:
+
+```lua
+local Setup = Page:Section({ Name = "Setup" })
+
+local Steps = Setup:Steps({ Total = 4, Current = 1, Caption = "Step 1 of 4 · Choose a build file" })
+Steps:Next("Step 2 of 4 · Check blocks")
+Steps:Prev()
+Steps:SetCurrent(4)
+
+local BuildFile = Setup:FileRow({
+    Name = "Build file",
+    Placeholder = "Choose a .Build file",
+    Button = "Browse",
+    OnBrowse = function(row) row:SetValue("plot_3.build") end,
+})
+
+local Buildability = Setup:StatCard({
+    Name = "Buildability",
+    Rows = {
+        { Label = "You own 0 of 1 required blocks", Meter = true, Percent = 0 },
+        { Label = "1 blocks · 0 types", Value = "—" },
+    },
+    OnMenu = function() end,      -- the "⋯" button on the card
+})
+Buildability:SetMeter(1, 100)
+Buildability:SetRow(2, "12 blocks · 4 types")
+
+local Infinite = Setup:Callout({
+    Kind = "check",               -- "check" | "info" | "warn" | "danger"
+    Name = "Infinite Blocks",
+    Text = "Reuse scalable blocks without limit.",
+    Flag = "wizard.infiniteBlocks",
+})
+Infinite:GetValue()
+```
+
+`CardList` is the selectable feature list — items without an `Image` get a placeholder
+tile so rows never change height:
+
+```lua
+local Items = Setup:CardList({
+    Select = true,                      -- single-select ring; false for plain rows
+    PlaceholderGlyph = "▦",
+    Items = {
+        { Name = "Test 1", Text = "test" },
+        { Name = "Test 2", Text = "test", Badge = "Soon" },
+    },
+    OnSelect = function(item, index) end,
+    OnOpen = function(item) end,        -- e.g. open a page for that item
+})
+
+Items:GetSelected()        -- the item table, or nil
+Items:SelectIndex(2)
+Items:SetItems({})         -- rebuild
+Items:Filter("test")       -- hide non-matching rows
+```
 
 ## Sections
 
@@ -348,15 +473,18 @@ palette and flags are global on purpose.
 ## Layout of the repo
 
 ```
-Argon.lua                  the library (single file, ~8k lines)
+Argon.lua                  the library (single file, 9,347 lines)
 examples/
   basic.lua                smallest useful menu
   feature_menu.lua         full luau.pro-style shell: rail, sidebar, cards, pills, themes
+  wizard.lua               square + side windows, selectable card list, 4-step wizard
   iris_style.lua           Iris-compatible call style
 tests/
   roblox_mock.lua          fake Roblox API (instances, signals, enums, tweens, fs, JSON, task)
   smoke.lua                146 assertions covering every component
-  test_argon_lua.py        pytest runner + static checks
+  chrome.lua               82 assertions on the hover / layout state machine and wizard set
+  docs_api.lua             137 assertions running every snippet in this README
+  test_argon_lua.py        pytest runner + static checks (self-containment, size, no markers)
 README.md
 ```
 
@@ -371,8 +499,14 @@ python3 -m venv .venv
 ```
 
 ```
-8 passed
+12 passed
 ```
+
+Three Lua suites run inside that: `smoke.lua` (146 assertions on components),
+`chrome.lua` (82 on the hover/layout state machine and the wizard set) and `docs_api.lua`
+(137, which executes every snippet in this file, so the docs cannot drift). Static checks in
+the same run assert the file is self-contained (no `require`, no `HttpGet`, no nested
+`loadstring`), at least 8,000 lines, and free of placeholders.
 
 The smoke suite builds the full shell, drives toggles, checkboxes, slider drags,
 dropdown selection and search, key capture, colour changes, theme switching, card
@@ -387,3 +521,12 @@ and teardown. The mock is a test fixture only — it is never loaded by `Argon.l
   changes and executor-injected GUI parents.
 * The source avoids Luau-only syntax, so the same file can be linted and tested with a
   stock Lua interpreter.
+* Hover chrome is a pointer-rect test against the window bounds, not per-child
+  `MouseEnter`. Per-child events strand the flag whenever a panel resizes under the cursor,
+  which is what makes a collapsing sidebar stick half-open. Touch devices ignore it and pin
+  the sidebar open, because there is no hover there.
+* Roblox cannot backdrop-blur GUI, draw SVG icons, box-shadow a frame, round individual
+  corners or letter-space text. Everything here is therefore built from translucent fills,
+  1px `UIStroke` hairlines and glyph icons — a Figma glass mock can be matched in structure
+  and tokens, but a real blur layer needs a pre-blurred wallpaper asset, and shadows need a
+  9-slice image. That is a platform limit, not a shortcut.

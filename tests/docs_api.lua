@@ -21,6 +21,17 @@ local function safe(label, fn)
     check(label, ok, err)
     return ok
 end
+local function mockClick(instance, label)
+    if not instance then
+        check(label, false, "missing instance")
+        return
+    end
+    local ok, err = pcall(function()
+        instance.MouseButton1Click:Fire()
+    end)
+    check(label, ok, err)
+end
+
 
 local Argon = loadstring()()
 
@@ -430,6 +441,141 @@ safe("Iris layer", function()
     Iris:Tree()
     Iris:End()
 end)
+
+-- --------------------------------------------------------------------------
+-- v3: shell shapes, hover states, wizard set (README "Shell shapes" +
+-- "Wizard set" snippets, run verbatim)
+-- --------------------------------------------------------------------------
+local V3 = Argon:Window({
+    Title = "luau.pro",
+    Subtitle = "v3.0.0",
+    Layout = "side",
+    HoverOpen = true,
+    CollapseDelay = 0.14,
+    RailOnly = true,
+    AutoClosePage = true,
+    Width = 660,
+    Height = 520,
+    Theme = "Aqua",
+})
+check("v3 window builds", V3 ~= nil)
+check("side layout recorded", V3.Layout == "side", V3.Layout)
+check("sidebar starts collapsed on the side layout", V3.SidebarShown == false)
+check("rail width is the floor", V3:CurrentWidth() == V3.RailWidth, V3:CurrentWidth())
+
+local V3Page = V3:Page({ Name = "Autobuilds", Icon = "⚒", Subtitle = "8 Features" })
+check("opening a page grows the pane", V3:CurrentWidth() > V3.RailWidth, V3:CurrentWidth())
+V3:SetHovered(true)
+check("hover opens the sidebar", V3.SidebarShown == true)
+check("expanded width is the requested width", V3:CurrentWidth() == 660, V3:CurrentWidth())
+V3:ClosePage()
+check("ClosePage hides the pane", V3.ActivePage == nil)
+V3:SelectPage(V3Page)
+V3:SetHovered(false, true)
+check("collapse keeps the page pane", V3:CurrentWidth() == V3.RailWidth + V3:PaneWidth(), V3:CurrentWidth())
+V3:SetRailOnly(true)
+check("SetRailOnly collapses to the rail", V3:CurrentWidth() == V3.RailWidth, V3:CurrentWidth())
+V3:SetRailOnly(false)
+V3:SetLayout("square")
+check("SetLayout to square drops the sidebar", V3.Layout == "square" and V3.SidebarShown == false)
+V3:SetLayout("side")
+
+V3:SetRailHideVisible(true)
+mockClick(V3.RailHide, "rail hide control")
+check("rail-only collapse stays operable", V3.Visible ~= nil)
+
+local Square = Argon:Window({ Title = "Argon", Layout = "square", Width = 380, Height = 560 })
+local SquarePage = Square:Page({ Name = "General", Icon = "▤" })
+check("square window has no sidebar", Square.Sidebar == nil)
+check("square width is fixed", Square:CurrentWidth() == 380, Square:CurrentWidth())
+Square:SetHovered(true)
+check("square ignores hover", Square:CurrentWidth() == 380, Square:CurrentWidth())
+
+local Pinned = Argon:Window({ Title = "Pinned", HoverOpen = false, Width = 640 })
+check("HoverOpen=false pins the sidebar", Pinned.SidebarShown == true)
+
+local Setup = V3Page:Section({ Name = "Setup" })
+
+local Steps = Setup:Steps({ Total = 4, Current = 1, Caption = "Step 1 of 4 · Choose a build file" })
+check("steps built", Steps ~= nil)
+Steps:Next("Step 2 of 4 · Check blocks")
+Steps:Prev()
+Steps:SetCurrent(4)
+check("steps clamp to the total", Steps.Current == 4, Steps.Current)
+
+local BuildFile = Setup:FileRow({
+    Name = "Build file",
+    Placeholder = "Choose a .Build file",
+    Button = "Browse",
+    OnBrowse = function(row) row:SetValue("plot_3.build") end,
+})
+mockClick(BuildFile.Button, "FileRow Browse")
+check("FileRow stores the chosen path", BuildFile:GetValue() == "plot_3.build", tostring(BuildFile:GetValue()))
+
+local Buildability = Setup:StatCard({
+    Name = "Buildability",
+    Rows = {
+        { Label = "You own 0 of 1 required blocks", Meter = true, Percent = 0 },
+        { Label = "1 blocks · 0 types", Value = "—" },
+    },
+    OnMenu = function() end,
+})
+Buildability:SetMeter(1, 100)
+Buildability:SetRow(2, "12 blocks · 4 types")
+mockClick(Buildability.MenuButton, "StatCard menu button")
+check("StatCard row updated", Buildability.Fields[2].Value.Text == "12 blocks · 4 types")
+
+local Infinite = Setup:Callout({
+    Kind = "check",
+    Name = "Infinite Blocks",
+    Text = "Reuse scalable blocks without limit.",
+    Flag = "wizard.infiniteBlocks",
+})
+check("Callout reads back its value", type(Infinite:GetValue()) == "boolean", type(Infinite:GetValue()))
+mockClick(Infinite.Box, "Callout toggle click")
+check("Callout toggles", Argon:GetFlag("wizard.infiniteBlocks") == false, tostring(Argon:GetFlag("wizard.infiniteBlocks")))
+
+local Items = Setup:CardList({
+    Select = true,
+    PlaceholderGlyph = "▦",
+    Items = {
+        { Name = "Test 1", Text = "test" },
+        { Name = "Test 2", Text = "test", Badge = "Soon" },
+    },
+    OnSelect = function() end,
+    OnOpen = function() end,
+})
+check("CardList builds rows", #Items.Cards == 2, #Items.Cards)
+mockClick(Items.Cards[1].Hitbox, "CardList row click")
+check("CardList selection", Items:GetSelected() ~= nil and Items:GetSelected().Name == "Test 1")
+Items:SelectIndex(2)
+Items:Filter("test")
+Items:SetItems({ { Name = "Rebuilt" } })
+check("CardList rebuilds", #Items.Cards == 1, #Items.Cards)
+
+mockClick(Items.Cards[1].Hitbox.MouseEnter and Items.Cards[1].Row, "Card row exists")
+
+local FooterPage = V3Page
+FooterPage:Footer({
+    Back = true,
+    Primary = "Choose a build file",
+    Disabled = true,
+    OnBack = function() end,
+    OnPrimary = function() error("disabled primary must not fire") end,
+})
+FooterPage:SetPrimaryText("Continue")
+FooterPage:SetBackVisible(false)
+mockClick(FooterPage.PrimaryButton, "disabled primary click")
+FooterPage:SetPrimaryEnabled(true)
+check("primary enabled flag", FooterPage:IsActionEnabled() == true)
+check("primary text follows the docs", FooterPage.PrimaryButton.Text == "Continue", FooterPage.PrimaryButton.Text)
+
+local PageSteps = SquarePage:Steps({ Total = 2, Current = 1 })
+local PageStat = SquarePage:StatCard({ Name = "KPI", Rows = { { Label = "a", Value = "1" } } })
+local PageFile = SquarePage:FileRow({ Name = "path" })
+local PageCallout = SquarePage:Callout({ Name = "note", Kind = "info" })
+local PageList = SquarePage:CardList({ Items = { { Name = "x" } } })
+check("page-level wizard forwards work", PageSteps and PageStat and PageFile and PageCallout and PageList)
 
 -- --------------------------------------------------------------------------
 -- section clear/visibility + teardown
