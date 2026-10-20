@@ -1,14 +1,17 @@
-# A fast, small, safe, gradually typed embeddable scripting language derived from Lua
-#
-# https://github.com/luau-lang/luau
-# https://luau.org/
+# Argon — Luau UI library
 
-# Code coverage
-coverage.out
+# Executor config output (Argon/configs/*.json) and other runtime files
+Argon/
+*.log
+*.bak
 
-# Profiling
-profile.out
-profile.svg
+# Local test environment for the Lua smoke suite
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
 
-# Time trace
-trace.json
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
