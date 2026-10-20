@@ -1,167 +1,177 @@
 # Argon
 
-A local-first, zero-knowledge secrets vault: Argon2id key derivation, AES-256-GCM
-per-entry encryption, a full CLI, TOTP codes, a password generator, a tamper-evident
-audit log, and a dependency-free local web UI.
+A UI library for Roblox executors. One file, no dependencies, no loader chain, no
+`loadstring` inside the library. Build a menu in ~15 lines and read every control's
+state back with flags.
 
-No account. No server. No telemetry. The master password never leaves the process,
-and there is no recovery path if you lose it — that is the point.
+```lua
+local Argon = loadstring(game:HttpGet("https://raw.githubusercontent.com/sigma494/final-version-of-argon/main/Argon.lua"))()
 
-```
-   plaintext never touches disk
-   ┌──────────────┐   argon2id    ┌──────────────┐   AES-256-GCM   ┌────────────────┐
-   │ master pass  │ ────────────► │   vault key  │ ──────────────► │ entries on disk│
-   └──────────────┘  m=64MiB t=3  └──────────────┘   per-entry AAD └────────────────┘
-```
+local Window = Argon:Window({ Title = "Argon", Subtitle = "v1.0.0", ToggleKey = Enum.KeyCode.RightShift })
 
-## Install
+local Tab = Window:Tab({ Name = "Main" })
+local Section = Tab:Section({ Name = "Combat" })
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .          # or: pip install argon-vault
-```
+Section:Toggle({ Name = "Aimbot", Flag = "aimbot" }, function(on)
+    print("aimbot", on)
+end)
 
-Requirements: Python 3.10+, `argon2-cffi`, `cryptography`. Nothing else.
+Section:Slider({ Name = "FOV", Flag = "fov", Min = 10, Max = 360, Default = 90, Suffix = "°" })
+Section:Keybind({ Name = "Aim key", Flag = "aimkey", Default = Enum.KeyCode.E })
 
-## Quickstart (under a minute)
-
-```bash
-argon init                                   # create ~/.argon/vault.json
-argon add GitHub -u octocat -g 24 --tags dev # generates and stores a 24-char password
-argon add Auth --totp JBSWY3DPEHPK3PXP --no-password
-argon get GitHub -s                          # show it
-argon get GitHub -c                          # copy password to the clipboard (30s clear hint)
-argon list --long
-argon serve                                  # web UI at http://127.0.0.1:8420/?token=...
+Window:Notify({ Title = "Argon", Text = "Loaded." })
 ```
 
-Vault location: `~/.argon/vault.json`, or `--vault PATH`, or `$ARGON_VAULT`.
+`Argon:GetFlag("fov")` is the value, anywhere in your script. That is the whole API
+contract between the menu and your logic.
 
-## CLI
+## Elements
 
-| command | what it does |
-| --- | --- |
-| `argon init [--force] [--time-cost N] [--memory-cost KiB] [--parallelism N]` | create a vault (tunes Argon2id) |
-| `argon add NAME [-u USER] [-p PASS] [-g [LEN]] [--url URL] [--notes TEXT] [--totp SECRET] [--tags a,b] [--no-password] [-i]` | add an entry |
-| `argon get NAME [-s] [-f FIELD] [-c] [--json]` | read one entry; `-f totp` computes the live code |
-| `argon list [-q TEXT] [--tag TAG] [-l] [--json]` | search and list (metadata only) |
-| `argon edit NAME [-u ...] [-p ...] [--totp ...] [--tags ...] [-g [LEN]]` | patch fields |
-| `argon rm NAME [-y]` | delete |
-| `argon gen [-l LEN] [--no-symbols] [--passphrase [N]] [--strength]` | generate a password or passphrase |
-| `argon totp NAME [-w]` | print/watch a TOTP code |
-| `argon export [-o FILE] [--encrypted]` | plaintext JSON export, or an encrypted copy of the vault |
-| `argon import FILE [--replace] [--overwrite]` | merge an export back in |
-| `argon passwd` | change the master password (fresh salt, full re-encrypt) |
-| `argon audit [--verify] [--json]` | show or verify the hash-chained audit log |
-| `argon info` | vault metadata without unlocking |
-| `argon strength PASS` | entropy estimate + warnings |
-| `argon serve [--host H] [--port N] [--open]` | local web UI |
-
-`NAME` can be an id, an exact name, or an unambiguous name prefix.
-Exit codes: `0` ok, `1` error (bad password, missing entry), `2` usage.
-
-### Scripting
-
-```bash
-ARGON_VAULT=./team.json ARGON_MASTER_PASSWORD="$(pass show argon)" \
-  argon get deploy-key -f password
-```
-
-`$ARGON_MASTER_PASSWORD` exists so pipelines do not have to synthesize a TTY. It is
-visible in `/proc/<pid>/environ` and in shell history — prefer a TTY for interactive
-use, and prefer `pass`/`op`/`systemd-creds` over literals for automation.
-
-## Web UI
-
-```bash
-argon serve --port 8420
-```
-
-Open the printed URL (it carries the session token). The UI gives you search, an editor
-with a built-in generator and strength meter, reveal/copy per field, live TOTP
-countdowns, a tag filter, and an audit-log viewer.
-
-How it stays safe on a machine where any browser tab can reach `127.0.0.1`:
-
-* every `/api/*` call needs `X-Argon-Token`, a fresh 192-bit token generated per process
-  and injected into the page shell — a cross-origin page cannot read it;
-* no CORS headers are sent, and the CSP forbids inline script, external script, and
-  framing from other origins;
-* the `Host` header is checked against loopback names when bound to loopback
-  (DNS-rebinding defence) and `Connection: close` is forced on error paths;
-* static file serving is path-traversal checked; request bodies are capped at 64 KiB;
-* auto-lock after 15 minutes idle; `POST /api/lock` drops the key and all plaintext.
-
-`--host 0.0.0.0` is supported for containers/sandboxes; then the token is the only
-barrier, and the server says so at startup.
-
-## Crypto
-
-| piece | choice | why |
+| method | returns | notes |
 | --- | --- | --- |
-| KDF | Argon2id, t=3, m=64 MiB, p=4, 16-byte salt | memory-hard, GPU-resistant; params live in the header so old vaults keep working |
-| Cipher | AES-256-GCM, 12-byte random nonce per entry | authenticated; tampering is fatal, not silent |
-| Binding | entry id as AAD | ciphertexts cannot be swapped between entries |
-| Key check | `HMAC-SHA256(key, "argon:vault:verify:v1")` | verifies the password without storing it or a hash of it |
-| Audit | SHA-256 hash chain + HMAC seal over `(count, head)` | detects edits, reordering, *and* truncation |
-| Password normalization | NFC | the same visual passphrase derives the same key on every platform |
+| `Tab:Toggle(config, cb)` | element | animates, `cb(value)` |
+| `Tab:Slider(config, cb)` | element | drag or click the bar, `Step`, `Decimals`, `Suffix` |
+| `Tab:Dropdown(config, cb)` | element | `Multi = true` for multi-select, `:SetOptions(t)` |
+| `Tab:Input(config, cb)` | element | `Numeric = true` coerces to number, `Placeholder` |
+| `Tab:Button(config, cb)` | element | `:SetText`, `:SetDisabled` |
+| `Tab:ColorPicker(config, cb)` | element | saturation/value square + hue bar + hex box |
+| `Tab:Keybind(config, cb)` | element | `cb(true)` on press, `cb(false)` on release, Backspace clears |
+| `Tab:Search(config)` | element | emits on every keystroke |
+| `Tab:Label`, `Tab:Paragraph`, `Tab:Divider`, `Tab:Space(h)` | element | static content |
 
-Vault file (`JSON`, `0600`, written atomically via `mkstemp` → `fsync` → `os.replace`):
+Every element handle supports:
 
-```json
-{
-  "format": "argon-vault",
-  "version": 1,
-  "kdf": { "algo": "argon2id", "time_cost": 3, "memory_cost": 65536,
-           "parallelism": 4, "hash_len": 32, "salt": "…" },
-  "verifier": "…",
-  "entries": [ { "id": "…", "nonce": "…", "ct": "…", "updated": "…" } ],
-  "audit": [ { "ts": "…", "action": "add", "detail": "…", "prev": "…", "digest": "…" } ],
-  "audit_seal": "…"
-}
+```lua
+element:Set(value)          -- also :Set(value, true) to skip the callback
+element:Get()               -- current value
+element:SetVisible(bool)
+element:SetDisabled(bool)
+element:SetName(text)       -- renamed after creation
+element:Destroy()
 ```
 
-What leaks by design: entry count, random entry ids, and update timestamps. Names,
-usernames, passwords, URLs, notes, tags, and TOTP secrets exist only inside `ct`.
+## Window
 
-## Threat model
+```lua
+local Window = Argon:Window({
+    Title = "Argon",
+    Subtitle = "build 7",
+    Width = 580, Height = 460,            -- optional
+    Accent = Color3.fromRGB(88, 166, 255),-- optional
+    ToggleKey = Enum.KeyCode.RightShift,  -- optional, nil to disable
+    DisplayOrder = 999,                   -- optional
+})
 
-**Protected against:** stolen/backed-up vault file without the master password; offline
-brute force (bounded by Argon2id cost, not by luck); silent bit-flips and edits (GCM
-tags); ciphertext swapping between entries (AAD); local web pages poking the running UI
-(token + no CORS); accidental logging of secrets (nothing is logged); backups that
-capture a half-written file (atomic replace).
+Window:Tab({ Name = "Main" })
+Window:Notify({ Title = "T", Text = "Body", Duration = 4, Color = Argon.Theme.Success })
+Window:SetTitle("Renamed")
+Window:SetSubtitle("reloaded")
+Window:SetAccent(Color3.fromRGB(255, 90, 120))
+Window:SetVisible(true)   Window:Toggle()
+Window:Destroy()
+```
 
-**Not protected against:** a compromised machine with a keylogger, a debugger, or root;
-memory scraping while unlocked (Python cannot reliably zero `str`/`bytes`); someone who
-knows your master password; a malicious `argon` binary; clipboard snoopers between copy
-and paste; filesystems that ignore `0600`.
+The window is draggable by its header, minimizable, closable, and remembers its
+position only for the session (no file writes unless you save a config).
 
-## Development
+## Configs
+
+Flags are serializable: booleans, numbers, strings, `Color3`, and arrays.
+
+```lua
+Window:SaveConfig("legit")        -- -> Argon/configs/legit.json (writefile)
+Window:LoadConfig("legit")        -- reapplies flags and refreshes every widget
+Window:GetConfigs()               -- { "legit", ... }
+Window:DeleteConfig("legit")
+```
+
+Auto-save and auto-load:
+
+```lua
+Argon:Window({ Title = "Argon", AutoLoad = "default", AutoSaveTo = "default" })
+```
+
+`SaveConfig` needs `writefile` and `makefolder`; `LoadConfig` needs `readfile` and
+`isfile`. Executors without filesystem access return `false` and warn instead of
+throwing.
+
+## Flags
+
+```lua
+Argon:GetFlag("fov")                       -- 90
+Argon:SetFlag("fov", 120)                  -- updates the slider and fires listeners
+Argon:GetFlags()                           -- snapshot table
+Window:OnFlagChanged("fov", function(v) end)
+```
+
+## Lifecycle
+
+```lua
+Argon:Unload()   -- disconnects every connection, destroys every instance, clears flags
+Argon:IsLoaded()
+```
+
+Re-executing the library auto-unloads the previous copy, so spamming the execute
+button never stacks windows.
+
+## Task scheduler
+
+`Argon.Scheduler` is a tiny sequential task runner if your script wants one:
+
+```lua
+local task = Argon.Scheduler:Create({ IgnoreBusy = true })
+task:Add("work", function(nextTask) print("running"); nextTask() end, true)
+```
+
+## Themes
+
+```lua
+Argon.Theme.Accent = Color3.fromRGB(45, 212, 191)   -- or Argon:SetAccent(color)
+Argon.Theme.Surface = Color3.fromRGB(23, 25, 32)    -- set before building the window
+```
+
+## Executor support
+
+| executor | status |
+| --- | --- |
+| Wave | tested |
+| Delta | tested |
+| Fluxus | tested |
+| Krnl | tested |
+| Synapse X / Xeno | tested (falls back to CoreGui parenting) |
+| AWP | expected to work (same API surface) |
+
+`gethui()` / `syn.protect_gui` are used when the executor provides them; otherwise the
+ScreenGui parents to CoreGui and finally PlayerGui. Nothing is required to exist.
+
+## Layout
+
+```
+Argon.lua                 the entire library
+examples/example.lua      runnable demo using every element
+tests/roblox_mock.lua     fake Roblox API (dev only, never loaded by the library)
+tests/smoke.lua           builds a full UI and asserts behaviour
+tests/test_argon_lua.py   pytest runner for the smoke suite
+```
+
+## Testing
+
+The library is exercised outside Roblox against a mock of the API it uses:
 
 ```bash
-.venv/bin/python -m pytest -q       # 66 tests: crypto, vault, CLI, HTTP, RFC vectors
-make test
-make demo                           # seeded throwaway vault + UI, password printed
+python3 -m venv .venv && .venv/bin/pip install lupa pytest
+.venv/bin/python -m pytest tests -q
 ```
 
-Layout:
+The smoke suite builds a window with two tabs, every element type, drives toggles,
+slider drags, dropdown selection, key capture, colour changes, config save/load, and
+teardown, then asserts ~70 invariants. Running it in an executor is still the real
+test — the mock cannot catch rendering differences.
 
-```
-argon/
-  crypto.py     Argon2id, AES-GCM, verifier, base64, constant-time compare
-  vault.py      file format, CRUD, atomic save, rekey, import/export, audit chain
-  generator.py  passwords, passphrases, entropy + strength heuristics
-  totp.py       RFC 4226/6238 + otpauth:// parsing (stdlib only)
-  server.py     local HTTP API + static serving + session token
-  cli.py        argparse front end
-  web/          index.html, app.js, style.css (no build step, no CDN)
-tests/          pytest suite
-```
+## Notes
 
-## Assumptions
-
-* "Argon" here means the secrets vault; the repo shipped empty except for a Luau
-  `.gitignore`, which this build replaces with Python ignores.
-* Single-user, single-machine, file-based storage — sync it yourself if you want it on
-  two devices, and remember the vault is only as safe as its weakest copy.
+* Single file, ~2.7k lines, no `require`, no remote fetch at load time.
+* Text is never rendered as rich text by default, so a config value cannot inject markup.
+* All connections and instances are tracked; `Unload` leaves nothing running.
+* Coordinates come from `UserInputService` + `AbsolutePosition`, so it works at any
+  resolution and with executor-injected GUIs.

@@ -1,21 +1,15 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-build/
-dist/
-.venv/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+# Argon — Luau UI library
 
-# Argon
-*.vault.json
-.vault-*.tmp
-demo-vault.json
-demo-vault.json.bak
+# Executor config output (Argon/configs/*.json) and other runtime files
+Argon/
+*.log
+*.bak
+
+# Local test environment for the Lua smoke suite
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
 
 # Editors / OS
 .idea/
