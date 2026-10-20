@@ -42,14 +42,31 @@ Page:Action("Continue", function() print("chosen:", Argon:GetFlag("fov")) end)
 
 ## Install
 
-Paste it, or vendor the file:
+Grab it from the repo:
 
 ```bash
 curl -O https://raw.githubusercontent.com/sigma494/final-version-of-argon/main/Argon.lua
 ```
 
+Or straight from a script:
+
 ```lua
-local Argon = loadstring(readfile("Argon.lua"))()   -- or HttpGet, or paste inline
+local Argon = loadstring(game:HttpGet("https://raw.githubusercontent.com/sigma494/final-version-of-argon/main/Argon.lua"))()
+```
+
+> While the v2 pull request is still open, `main` does not carry the library yet.
+> Use the branch URL until it is merged:
+>
+> ```lua
+> local Argon = loadstring(game:HttpGet(
+>     "https://raw.githubusercontent.com/sigma494/final-version-of-argon/arena/4725bffa-final-version-of-argon/Argon.lua"
+> ))()
+> ```
+
+You can also skip the network entirely: save the file and read it back.
+
+```lua
+local Argon = loadstring(readfile("Argon.lua"))()   -- or paste the source inline
 ```
 
 Requirements: nothing. Works on Luau and on plain Lua 5.1–5.5 (the source avoids
