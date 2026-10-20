@@ -37,6 +37,14 @@ function Vector2.__tostring(v)
 end
 M.Vector2 = Vector2
 
+-- Vector3 -----------------------------------------------------------
+local Vector3 = {}
+Vector3.__index = Vector3
+function Vector3.new(x, y, z)
+    return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0 }, Vector3)
+end
+M.Vector3 = Vector3
+
 -- UDim / UDim2 ------------------------------------------------------
 local UDim = {}
 UDim.__index = UDim
@@ -125,6 +133,7 @@ M.Enum = Enum
 -- typeof ------------------------------------------------------------
 local types = {
     [Vector2] = "Vector2",
+    [Vector3] = "Vector3",
     [UDim2] = "UDim2",
     [UDim] = "UDim",
     [Color3] = "Color3",
@@ -187,6 +196,7 @@ local INSTANCE_DEFAULTS = {
     AbsoluteContentSize = Vector2.new(0, 0),
     AbsoluteRotation = 0,
     AbsoluteCanvasSize = Vector2.new(0, 0),
+    CanvasPosition = Vector3.new(0, 0, 0),
     TextBounds = Vector2.new(0, 0),
     Resolution = Vector2.new(1920, 1080),
     ViewportSize = Vector2.new(1920, 1080),
@@ -306,6 +316,10 @@ function InstanceClass:WaitForChild(name)
     return self:FindFirstChild(name) or newInstance(name, self)
 end
 
+function InstanceClass:IsFocused()
+    return self._focused == true
+end
+
 function InstanceClass:IsA(className)
     return self._props.ClassName == className or className == "Instance"
 end
@@ -365,7 +379,15 @@ local function service(name, table_)
 end
 
 M.services = services
-M.UserInputService = service("UserInputService")
+M.UserInputService = service("UserInputService", {
+    TouchEnabled = false,
+    KeyboardEnabled = true,
+    MouseEnabled = true,
+    GetMouseLocation = function(self)
+        return M.mouseLocation or Vector2.new(400, 300)
+    end,
+    GetFocusedTextBox = function() return nil end,
+})
 M.TweenService = service("TweenService", {
     Create = function(self, instance, info, properties)
         return {
@@ -388,6 +410,13 @@ M.HttpService = service("HttpService", {
 M.CoreGui = service("CoreGui")
 M.Players = service("Players")
 M.Workspace = service("Workspace")
+M.Workspace.CurrentCamera = setmetatable({
+    ClassName = "Camera",
+    ViewportSize = Vector2.new(1280, 720),
+    _props = {},
+    _children = {},
+    _signals = {},
+}, InstanceClass)
 
 local localPlayer = newInstance("Player")
 localPlayer.Name = "LocalPlayer"
@@ -413,6 +442,14 @@ M.game = setmetatable({}, {
         if key == "PlaceId" then
             return 123456
         end
+        if key == "JobId" then
+            return "mock-job-id"
+        end
+        if key == "HttpGet" then
+            return function(_, url)
+                return "-- fetched " .. tostring(url)
+            end
+        end
         return nil
     end,
 })
@@ -434,6 +471,7 @@ local taskLib = {
     defer = function(fn, ...)
         table.insert(scheduler.queue, { at = scheduler.clock, fn = fn, args = { ... } })
     end,
+    cancel = function() end,
 }
 M.task = taskLib
 
