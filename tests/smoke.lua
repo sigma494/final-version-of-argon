@@ -36,7 +36,7 @@ local baseline = robloxMock.countLive()
 
 local Argon = loadstring(ARGON_SOURCE)()
 check(type(Argon) == "table", "library returns a table")
-check(Argon.Version == "2.0.0", "version is 2.0.0")
+check(Argon.Version == "3.0.0", "version is 3.0.0")
 check(getgenv().Argon == Argon, "published to getgenv()")
 check(getgenv().ArgonLib == Argon, "legacy ArgonLib alias")
 check(type(Argon.Themes) == "table" and Argon.Themes.Aqua ~= nil, "themes registered")

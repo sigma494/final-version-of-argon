@@ -460,7 +460,9 @@ M.scheduler = scheduler
 
 local taskLib = {
     delay = function(seconds, fn, ...)
-        table.insert(scheduler.queue, { at = scheduler.clock + (seconds or 0), fn = fn, args = { ... } })
+        local job = { at = scheduler.clock + (seconds or 0), fn = fn, args = { ... } }
+        table.insert(scheduler.queue, job)
+        return job
     end,
     spawn = function(fn, ...)
         table.insert(scheduler.queue, { at = scheduler.clock, fn = fn, args = { ... } })
@@ -469,9 +471,21 @@ local taskLib = {
         scheduler.clock = scheduler.clock + (seconds or 0)
     end,
     defer = function(fn, ...)
-        table.insert(scheduler.queue, { at = scheduler.clock, fn = fn, args = { ... } })
+        local job = { at = scheduler.clock, fn = fn, args = { ... } }
+        table.insert(scheduler.queue, job)
+        return job
     end,
-    cancel = function() end,
+    cancel = function(thread)
+        -- mark queued jobs dead so a cancelled delay cannot fire later
+        if thread and scheduler.queue then
+            for index = #scheduler.queue, 1, -1 do
+                if scheduler.queue[index] == thread then
+                    table.remove(scheduler.queue, index)
+                    return
+                end
+            end
+        end
+    end,
 }
 M.task = taskLib
 
@@ -736,6 +750,25 @@ end
 
 function M.click(instance)
     instance.MouseButton1Click:Fire()
+end
+
+-- Rectangles in Roblox are derived by the engine; the mock has to be told.
+function M.setRect(instance, x, y, w, h)
+    instance.AbsolutePosition = Vector2.new(x, y)
+    instance.AbsoluteSize = Vector2.new(w, h)
+    return instance
+end
+
+-- Move the pointer and deliver the mouse-movement event the library listens to.
+function M.moveMouse(x, y)
+    M.mouseLocation = Vector2.new(x, y)
+    M.UserInputService.InputChanged:Fire(M.input(Enum.UserInputType.MouseMovement, x, y))
+    return M
+end
+
+function M.mouseAt(x, y)
+    M.mouseLocation = Vector2.new(x, y)
+    return M
 end
 
 M.Enum = Enum
