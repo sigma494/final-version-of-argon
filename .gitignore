@@ -1,14 +1,23 @@
-# A fast, small, safe, gradually typed embeddable scripting language derived from Lua
-#
-# https://github.com/luau-lang/luau
-# https://luau.org/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Code coverage
-coverage.out
+# Argon
+*.vault.json
+.vault-*.tmp
+demo-vault.json
+demo-vault.json.bak
 
-# Profiling
-profile.out
-profile.svg
-
-# Time trace
-trace.json
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

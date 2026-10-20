@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="argon-token" content="__ARGON_TOKEN__" />
+  <title>Argon</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d9488'/%3E%3Cpath d='M16 6l8 20h-4.2l-1.5-4h-4.6l-1.5 4H8L16 6zm0 8.4l-1.6 4.4h3.2L16 14.4z' fill='%23041014'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="mark">Ar</span>
+        <span class="title">Argon</span>
+        <span class="subtitle">zero-knowledge vault</span>
+      </div>
+      <div class="topbar-actions">
+        <div class="pill" id="status-pill" hidden><span class="dot"></span><span id="status-text">locked</span></div>
+        <button class="btn ghost" id="audit-btn" hidden>Audit log</button>
+        <button class="btn ghost" id="lock-btn" hidden>Lock</button>
+        <button class="btn primary" id="new-btn" hidden>New entry</button>
+      </div>
+    </header>
+
+    <!-- locked / setup -->
+    <section class="centered" id="gate">
+      <form class="card gate-card" id="gate-form" autocomplete="off">
+        <h1 id="gate-title">Unlock your vault</h1>
+        <p class="muted" id="gate-hint">Your master password never leaves this process.</p>
+        <label class="field">
+          <span>Master password</span>
+          <input type="password" id="master-password" autocomplete="current-password" required />
+        </label>
+        <label class="field" id="confirm-field" hidden>
+          <span>Repeat password</span>
+          <input type="password" id="master-confirm" autocomplete="new-password" />
+        </label>
+        <div class="meter" id="meter" hidden><div class="meter-fill" id="meter-fill"></div></div>
+        <p class="muted small" id="meter-label" hidden></p>
+        <button class="btn primary wide" id="gate-submit" type="submit">Unlock</button>
+        <p class="error" id="gate-error" hidden></p>
+        <p class="muted small" id="gate-path"></p>
+      </form>
+    </section>
+
+    <!-- vault -->
+    <main class="workspace" id="workspace" hidden>
+      <aside class="sidebar">
+        <div class="search-row">
+          <input type="search" id="search" placeholder="Search  /" autocomplete="off" />
+        </div>
+        <ul class="entry-list" id="entry-list"></ul>
+        <div class="sidebar-foot muted small" id="list-count"></div>
+      </aside>
+      <section class="detail" id="detail">
+        <div class="empty" id="detail-empty">
+          <p>Select an entry, or press <kbd>N</kbd> to add one.</p>
+        </div>
+        <article class="entry-view" id="entry-view" hidden></article>
+      </section>
+    </main>
+  </div>
+
+  <!-- editor modal -->
+  <div class="overlay" id="editor-overlay" hidden>
+    <form class="card modal" id="editor-form" autocomplete="off">
+      <h2 id="editor-title">New entry</h2>
+      <input type="hidden" id="editor-id" />
+      <div class="grid2">
+        <label class="field"><span>Name *</span><input id="f-name" required maxlength="120" /></label>
+        <label class="field"><span>Username</span><input id="f-username" maxlength="200" /></label>
+        <label class="field"><span>URL</span><input id="f-url" maxlength="500" /></label>
+        <label class="field"><span>Tags (comma separated)</span><input id="f-tags" maxlength="200" /></label>
+      </div>
+      <label class="field">
+        <span>Password</span>
+        <div class="inline">
+          <input id="f-password" type="text" class="mono" maxlength="1024" />
+          <button type="button" class="btn ghost" id="gen-btn">Generate</button>
+        </div>
+      </label>
+      <label class="field"><span>TOTP secret (base32 or otpauth://)</span><input id="f-totp" class="mono" maxlength="500" /></label>
+      <label class="field"><span>Notes</span><textarea id="f-notes" rows="3" maxlength="4000"></textarea></label>
+      <div class="gen-panel" id="gen-panel" hidden>
+        <div class="inline">
+          <span class="muted small">Length <b id="gen-length-label">20</b></span>
+          <input type="range" id="gen-length" min="8" max="64" value="20" />
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" id="gen-upper" checked /> A-Z</label>
+          <label><input type="checkbox" id="gen-lower" checked /> a-z</label>
+          <label><input type="checkbox" id="gen-digits" checked /> 0-9</label>
+          <label><input type="checkbox" id="gen-symbols" checked /> !@#</label>
+          <label><input type="checkbox" id="gen-ambiguous" /> avoid look-alikes</label>
+        </div>
+        <div class="meter"><div class="meter-fill" id="gen-meter-fill"></div></div>
+        <p class="muted small" id="gen-strength"></p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="editor-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="editor-save">Save entry</button>
+      </div>
+      <p class="error" id="editor-error" hidden></p>
+    </form>
+  </div>
+
+  <!-- audit modal -->
+  <div class="overlay" id="audit-overlay" hidden>
+    <div class="card modal wide-modal">
+      <h2>Audit log</h2>
+      <p class="muted small" id="audit-summary"></p>
+      <div class="audit-list" id="audit-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="audit-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
