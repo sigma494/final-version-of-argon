@@ -146,6 +146,18 @@ mock.mouseAt(VIEWPORT_X / 2, VIEWPORT_Y / 2)  -- pointer came back
 mock.runScheduler(40)
 check(window.hovered == true, "delayed collapse is cancelled by the re-probe when the pointer returned")
 
+-- rail-only must not become a dead strip: the collapsed shell keeps a hide
+-- control and the rail stays a drag handle
+check(window.RailHide ~= nil, "rail carries a hide control")
+mock.click(window.RailHide)
+check(window.Visible == false, "rail hide control hides the window")
+window:SetVisible(true)
+check(window.Visible == true, "window comes back")
+window:SetRailHideVisible(false)
+check(window.RailHide.Visible == false, "SetRailHideVisible(false) hides the control")
+window:SetRailHideVisible(true)
+check(window.RailHide.Visible == true, "SetRailHideVisible(true) shows it again")
+
 -- ------------------------------------------------------------------ minimise
 local beforeMinimise = syncRect(window)
 window:SetMinimized(true)

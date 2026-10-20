@@ -2511,7 +2511,7 @@ local function makeDraggable(frame, handle, options)
             and input.UserInputType ~= Enum.UserInputType.Touch then
             return
         end
-        if options.shouldDrag and not options.shouldDrag() then
+        if options.shouldDrag and not options.shouldDrag(input, handle) then
             return
         end
         dragging = true
@@ -4391,8 +4391,33 @@ function Window:BuildShell()
             Parent = self.Rail,
             AnchorPoint = Vector2.new(0, 1),
             Position = UDim2.new(0, 0, 1, -10),
-            Size = UDim2.new(1, 0, 0, 84),
+            Size = UDim2.new(1, 0, 0, 112),
         })
+
+        -- When the shell is collapsed to the rail the window is 52px wide: the
+        -- sidebar (which owns the logo drag handle) and the corner controls are
+        -- clipped away. The rail has to carry both jobs or the user is stuck with
+        -- a strip they can neither move nor hide.
+        self.RailHide = UI.button({
+            Parent = self.RailBottom,
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 74),
+            Size = UDim2.new(0, 32, 0, 26),
+            BackgroundTransparency = 1,
+            Text = "⏋",
+            TextSize = 14,
+            TextColor3 = theme.TextDim,
+        })
+        attachTooltip(self.RailHide, "Hide menu")
+        Connect(self.RailHide.MouseEnter, function()
+            animate(self.RailHide, { TextColor3 = theme.Text }, 0.1)
+        end)
+        Connect(self.RailHide.MouseLeave, function()
+            animate(self.RailHide, { TextColor3 = theme.TextDim }, 0.1)
+        end)
+        Connect(self.RailHide.MouseButton1Click, function()
+            self:SetVisible(false)
+        end)
 
         local avatar = UI.frame({
             Parent = self.RailBottom,
@@ -4670,6 +4695,17 @@ function Window:BuildShell()
 
     makeDraggable(self.Main, self.Sidebar and self.LogoRow or self.Main, { bounds = true })
 
+    if self.Rail then
+        -- Dragging the rail background moves the window, but a press that starts
+        -- on a rail button must not, or clicking a page would drag the shell.
+        makeDraggable(self.Main, self.Rail, {
+            bounds = true,
+            shouldDrag = function(input, handle)
+                return input.Target == nil or input.Target == handle
+            end,
+        })
+    end
+
     self:UpdateChrome(false)
     self:StartPointerTracking()
 
@@ -4683,6 +4719,9 @@ function Window:BuildShell()
         self.Shadow.BackgroundColor3 = palette.Accent
         if self.Rail then
             self.Rail.BackgroundColor3 = palette.Rail
+            if self.RailHide then
+                self.RailHide.TextColor3 = palette.TextDim
+            end
         end
         if self.Sidebar then
             self.Sidebar.BackgroundColor3 = palette.Sidebar
@@ -4705,6 +4744,13 @@ function Window:BuildShell()
         self.MinimizeButton.TextColor3 = palette.TextMuted
         self.CloseButton.TextColor3 = palette.TextMuted
     end)
+end
+
+function Window:SetRailHideVisible(visible)
+    if self.RailHide then
+        self.RailHide.Visible = visible ~= false
+    end
+    return self
 end
 
 function Window:RefreshThemeSwitch()

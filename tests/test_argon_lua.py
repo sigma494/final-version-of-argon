@@ -104,7 +104,7 @@ def test_chrome_state_machine(chrome_results):
 
 
 def test_chrome_suite_is_substantial(chrome_results):
-    assert chrome_results["passed"] >= 70, f"only {chrome_results['passed']} chrome assertions ran"
+    assert chrome_results["passed"] >= 80, f"only {chrome_results['passed']} chrome assertions ran"
 
 
 def test_hover_state_machine_exists():
@@ -210,6 +210,6 @@ def test_documented_api_matches_implementation():
     results = lua.execute(DOCS.read_text(encoding="utf-8"))
     failures = [str(m) for m in results["messages"].values()]
     assert int(results["failed"]) == 0, "\n".join(failures)
-    assert int(results["passed"]) >= 60, f"only {int(results['passed'])} doc assertions ran"
+    assert int(results["passed"]) >= 120, f"only {int(results['passed'])} doc assertions ran"
     errors = [str(e) for e in results["mockErrors"].values()]
     assert errors == [], "\n".join(errors)

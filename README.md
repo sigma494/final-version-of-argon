@@ -9,7 +9,7 @@ sidebar slides in only while the pointer is over the window), the hover/press/se
 states for cards and buttons, and the wizard set: `Steps`, `StatCard`, `FileRow`,
 `Callout`, `CardList`, `Footer`.
 
-9,301 lines of plain Lua. No dependencies, no loader chain, no self-fetch, no nested
+9,347 lines of plain Lua. No dependencies, no loader chain, no self-fetch, no nested
 `loadstring`. Everything below ships in `Argon.lua`.
 
 ```lua
@@ -138,6 +138,14 @@ Square:SetLayout("side")     -- switch live, no rebuild
 Square:SetRailOnly(true)     -- collapse to the icon rail
 Square:SetHovered(true)      -- force the sidebar open (tests, scripts, keybinds)
 Square:ClosePage()            -- hide the pane, keep the rail
+Square:SetRailHideVisible(true)  -- the ⏋ control at the bottom of the rail
+```
+
+Collapsed to the rail the window is only ~52px wide, so the sidebar's logo drag handle and
+the corner controls are clipped away. The rail therefore carries both jobs: pressing its
+background moves the window (presses that start on a rail button do not, or clicking a page
+would drag the shell), and `RailHide` at the bottom hides it. `ToggleKey` still works either
+way.
 ```
 
 ## Pages
@@ -465,7 +473,7 @@ palette and flags are global on purpose.
 ## Layout of the repo
 
 ```
-Argon.lua                  the library (single file, ~9.3k lines)
+Argon.lua                  the library (single file, 9,347 lines)
 examples/
   basic.lua                smallest useful menu
   feature_menu.lua         full luau.pro-style shell: rail, sidebar, cards, pills, themes

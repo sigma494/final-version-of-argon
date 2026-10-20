@@ -480,6 +480,10 @@ V3:SetLayout("square")
 check("SetLayout to square drops the sidebar", V3.Layout == "square" and V3.SidebarShown == false)
 V3:SetLayout("side")
 
+V3:SetRailHideVisible(true)
+mockClick(V3.RailHide, "rail hide control")
+check("rail-only collapse stays operable", V3.Visible ~= nil)
+
 local Square = Argon:Window({ Title = "Argon", Layout = "square", Width = 380, Height = 560 })
 local SquarePage = Square:Page({ Name = "General", Icon = "▤" })
 check("square window has no sidebar", Square.Sidebar == nil)
